@@ -37,12 +37,12 @@ def main():
     policy = runner.get_inference_policy(device="cuda:0")
 
     # print(env.scene)
-    import pdb;pdb.set_trace()
+    # import pdb;pdb.set_trace()
     # cam = env.scene.add_camera(
     #     res    = (1280, 960),
     #     pos    = (3.5, 0.0, 2.5),
     #     lookat = (0, 0, 0.5),
-    #     fov    = 30,
+    #     fov    = 30,x
     #     GUI    = False
     # )
 
@@ -54,6 +54,7 @@ def main():
             actions = policy(obs)
             obs, _, rews, dones, infos = env.step(actions)
             frame_count += 1
+            # print('obs: ', obs)
 
             # change camera position
             env.cam.set_pose(
@@ -63,11 +64,11 @@ def main():
             
             env.cam.render()
 
-            if frame_count > 100:
+            if frame_count > 500:
                 break
 
     # stop recording and save video. If `filename` is not specified, a name will be auto-generated using the caller file name.
-    env.cam.stop_recording(save_to_filename='video.mp4', fps=60)
+    env.cam.stop_recording(save_to_filename='{}.mp4'.format(args.exp_name), fps=60)
 
 
 if __name__ == "__main__":

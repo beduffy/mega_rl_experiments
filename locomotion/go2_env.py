@@ -168,6 +168,9 @@ class Go2Env:
         self.rew_buf[:] = 0.0
         for name, reward_func in self.reward_functions.items():
             rew = reward_func() * self.reward_scales[name]
+            print('name: {}. rew: {}'.format(name, rew))
+            print('rew.shape: ', rew.shape)  # 4096 but when my reward it is empty tensor...
+            print('rew_buf.shape: ', self.rew_buf.shape)  # 4096
             self.rew_buf += rew
             self.episode_sums[name] += rew
 
@@ -242,7 +245,10 @@ class Go2Env:
     # ------------ reward functions----------------
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        # lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        # return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
+        # backwards
+        lin_vel_error = torch.sum(torch.square(-self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
 
     def _reward_tracking_ang_vel(self):
@@ -266,8 +272,14 @@ class Go2Env:
         # Penalize base height away from target
         return torch.square(self.base_pos[:, 2] - self.reward_cfg["base_height_target"])
 
-    def _calculate_top_right_leg_in_air_reward(self):
+    def _reward_top_right_leg_in_air(self):
         # Implement the logic to calculate the reward for keeping the top right leg in the air
         # This is a placeholder implementation and should be replaced with actual logic
-        top_right_leg_in_air = 1.0  # Replace with actual condition to check if the leg is in the air
-        return top_right_leg_in_air
+        # top_right_leg_in_air = 1.0  # Replace with actual condition to check if the leg is in the air
+        
+        # THE above sums and squares are element wise or column wise, debug them all. TODO create pytorch lightning jupyter notebook and step through individual things to understand better
+        rl_calf_pos = self.robot.get_link("RR_calf").get_pos()
+        print(rl_calf_pos)
+        distance_between_right_leg_and_ground = rl_calf_pos[2]
+        print('distance_between_right_leg_and_ground: ', distance_between_right_leg_and_ground)
+        return torch.sum(distance_between_right_leg_and_ground)  # since 3 commands or 3 numbers for some reason
