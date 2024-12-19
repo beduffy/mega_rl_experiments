@@ -1,8 +1,110 @@
+import time
+
 import pybullet as p
 import pybullet_data
-import time
 import numpy as np
-from simulation_utils import CameraController
+
+# from simulation_utils import CameraController
+
+
+class CameraController:
+    def __init__(self, distance=2.0, yaw=45.0, pitch=-30.0, target_position=[0.0, 0.0, 0.0]):
+        # Default camera parameters
+        self.distance = distance
+        self.yaw = yaw
+        self.pitch = pitch
+        self.target_position = target_position
+        self.up_axis_index = 2  # Z-axis up (0=X, 1=Y, 2=Z)
+        
+        # Enable mouse picking and keyboard control
+        p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
+        p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 1)
+        
+        # Initialize camera
+        self.reset_camera()
+    
+
+    def reset_camera(self):
+        """Reset camera to default position"""
+        p.resetDebugVisualizerCamera(
+            cameraDistance=self.distance,
+            cameraYaw=self.yaw,
+            cameraPitch=self.pitch,
+            cameraTargetPosition=self.target_position
+        )
+    
+
+    def set_camera_position(self, distance, yaw, pitch, target_position=None):
+        """Programmatically set camera position"""
+        self.distance = distance
+        self.yaw = yaw
+        self.pitch = pitch
+        if target_position is not None:
+            self.target_position = target_position
+        
+        p.resetDebugVisualizerCamera(
+            cameraDistance=self.distance,
+            cameraYaw=self.yaw,
+            cameraPitch=self.pitch,
+            cameraTargetPosition=self.target_position
+        )
+    
+
+    def orbit_camera(self, orbit_speed=0.5):
+        """Orbit camera around target position"""
+        self.yaw += orbit_speed
+        if self.yaw > 360:
+            self.yaw -= 360
+        
+        p.resetDebugVisualizerCamera(
+            cameraDistance=self.distance,
+            cameraYaw=self.yaw,
+            cameraPitch=self.pitch,
+            cameraTargetPosition=self.target_position
+        )
+    
+
+    def get_camera_image(self, width=640, height=480):
+        """Get RGB and depth image from current camera position"""
+        view_matrix = p.computeViewMatrixFromYawPitchRoll(
+            cameraTargetPosition=self.target_position,
+            distance=self.distance,
+            yaw=self.yaw,
+            pitch=self.pitch,
+            roll=0,
+            upAxisIndex=self.up_axis_index
+        )
+        
+        proj_matrix = p.computeProjectionMatrixFOV(
+            fov=60.0,
+            aspect=width / height,
+            nearVal=0.1,
+            farVal=100.0
+        )
+        
+        # Get camera image
+        (_, _, px, depth, _) = p.getCameraImage(
+            width=width,
+            height=height,
+            viewMatrix=view_matrix,
+            projectionMatrix=proj_matrix,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL
+        )
+        
+        rgb_array = np.array(px, dtype=np.uint8)
+        rgb_array = rgb_array[:, :, :3]
+        
+        return rgb_array, depth
+    
+
+    def print_current_camera_params(self):
+        """Print current camera parameters"""
+        params = p.getDebugVisualizerCamera()
+        print("\nCamera Parameters:")
+        print(f"Distance: {params[10]:.2f}")
+        print(f"Yaw: {params[8]:.2f}")
+        print(f"Pitch: {params[9]:.2f}")
+        print(f"Target Position: {params[11]}")
 
 
 class LookAtObjectEnv:
