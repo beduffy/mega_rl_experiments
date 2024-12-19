@@ -5,6 +5,8 @@ from typing import Tuple, Optional
 import pybullet as p
 import pybullet_data
 import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
 
 
 # TODO do I want action primitives or some form of continuous action e.g. directly set yaw to 85 degrees rather than lots of discrete actions
@@ -150,16 +152,22 @@ class CameraController:
         print(f"Target Position: {params[11]}")
 
 
-class LookAtObjectEnv:
+class LookAtObjectEnv(gym.Env):
     """Environment for training an agent to look at a target object"""
     
     def __init__(self, render_mode="human"):
+        super().__init__()
         self.render_mode = render_mode
         self.connection_mode = p.GUI if render_mode == "human" else p.DIRECT
         
-        # Action and observation spaces
-        self.action_space = len(CameraAction)
-        self.observation_space_shape = (480, 640, 3)  # RGB image
+        # Define action and observation spaces
+        self.action_space = spaces.Discrete(len(CameraAction))
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(480, 640, 3),
+            dtype=np.uint8
+        )
         
         # Movement parameters
         self.yaw_delta = 2.0
@@ -169,22 +177,32 @@ class LookAtObjectEnv:
         # Reward parameters
         self.max_steps = 200
         self.current_step = 0
-        self.target_distance_threshold = 10.0  # pixels from center
+        self.target_distance_threshold = 10.0
         self.previous_distance = None
         
         # Target position
         self.target_position = [0.0, 0.0, 2.0]
-        
-        self.reset()
     
 
-    def reset(self) -> Tuple[np.ndarray, dict]:
+    def close(self):
+        """Clean up environment resources"""
+        if p.isConnected():
+            p.disconnect()
+
+    def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
         """Reset the environment
+        
+        Args:
+            seed (Optional[int]): The seed for random number generation
+            options (Optional[dict]): Additional options for reset
         
         Returns:
             observation (np.ndarray): RGB image
             info (dict): Additional information
         """
+        # Initialize the RNG
+        super().reset(seed=seed)
+        
         # Connect to PyBullet if not already connected
         if not p.isConnected():
             p.connect(self.connection_mode)
