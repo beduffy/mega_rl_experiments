@@ -214,6 +214,10 @@ def main():
     print("- Press 'p' to print current camera parameters")
     print("- Press 'q' to quit")
     
+
+    print_interval = 0.1
+    last_print_time = time.time()
+
     yaw = 0
     pitch = 0
     rgb, distance = env.get_observation()
@@ -239,6 +243,13 @@ def main():
                     env.camera.move_camera(right=-translation_amt)  # Strafe left
                 elif key == ord('e'):
                     env.camera.move_camera(right=translation_amt)  # Strafe right
+                elif key == p.B3G_UP_ARROW:  # Look up
+                    env.camera.pitch = min(89, env.camera.pitch + 2)  # Limit pitch to avoid gimbal lock
+                    env.camera.update_camera()
+                elif key == p.B3G_DOWN_ARROW:  # Look down
+                    env.camera.pitch = max(-89, env.camera.pitch - 2)  # Limit pitch to avoid gimbal lock
+                    env.camera.update_camera()
+                
                 elif key == ord('r'):
                     rgb, distance = env.reset()
                     if distance is not None:
@@ -248,10 +259,18 @@ def main():
                 elif key == ord('q'):
                     p.disconnect()
                     return
+                # elif key == p.B3G_ESCAPE:
+                #     p.disconnect()
+                #     return
         
-        if distance is not None:
-            print(f"Distance to sphere center: {distance:.2f}")
+        rgb, distance = env.get_observation()
         
+        # Throttle distance printing
+        if time.time() - last_print_time >= print_interval:
+            if distance is not None:
+                print(f"Distance to sphere center: {distance:.2f}")
+            last_print_time = time.time()
+
         p.stepSimulation()
         time.sleep(1./240.)
 
