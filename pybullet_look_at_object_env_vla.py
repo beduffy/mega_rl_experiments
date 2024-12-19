@@ -66,10 +66,10 @@ class CameraController:
             self.camera_position[2] + look_z
         ]
         
-        # Update debug visualizer camera
+        # Update debug visualizer camera with a single call
         p.resetDebugVisualizerCamera(
-            cameraDistance=0.1,  # Small distance since we're using absolute positions
-            cameraYaw=self.yaw,
+            cameraDistance=0.1,
+            cameraYaw=self.yaw - 90,
             cameraPitch=self.pitch,
             cameraTargetPosition=target_position
         )
@@ -188,7 +188,8 @@ class LookAtObjectEnv:
         if not p.isConnected():
             p.connect(self.connection_mode)
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
-            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+            # p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+            # p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
         
         # Load ground plane for reference
         p.loadURDF("plane.urdf")
