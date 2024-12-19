@@ -1,5 +1,6 @@
 import time
 from typing import Tuple, Optional
+from datetime import datetime
 
 import pybullet as p
 import numpy as np
@@ -7,14 +8,16 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import BaseCallback
 
-from pybullet_look_at_object_env_vla import LookAtObjectEnv
+from pybullet_look_at_object_env import LookAtObjectEnv
 
 
 def make_env():
     """Create and wrap the environment"""
     # env = LookAtObjectEnv()
-    env = LookAtObjectEnv('robot')
+    # env = LookAtObjectEnv('robot')
+    env = LookAtObjectEnv('human')
     # Wrap env in Monitor to log training stats
     env = Monitor(env)
     return env
@@ -26,7 +29,6 @@ def train():
     env = make_env()
     
     # Create unique run name with timestamp
-    from datetime import datetime
     run_name = f"PPO_Camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     # Create the PPO agent
@@ -52,8 +54,6 @@ def train():
     )
     
     # Create a custom callback to log additional metrics
-    from stable_baselines3.common.callbacks import BaseCallback
-    
     class TensorboardCallback(BaseCallback):
         def __init__(self, verbose=0):
             super().__init__(verbose)
@@ -63,8 +63,11 @@ def train():
         def _on_step(self):
             if self.locals.get('done'):
                 # Log episode metrics
-                self.logger.record('custom/episode_reward', self.locals['rewards'][0])
-                self.logger.record('custom/episode_length', self.locals['dones'].sum())
+                episode_reward = self.locals['rewards'][0]
+                episode_length = self.locals['dones'].sum()
+                print(f"Episode reward: {episode_reward}, length: {episode_length}")
+                self.logger.record('custom/episode_reward', episode_reward)
+                self.logger.record('custom/episode_length', episode_length)
                 # Log environment info
                 if 'distance' in self.locals['infos'][0]:
                     self.logger.record('env/target_distance', self.locals['infos'][0]['distance'])
