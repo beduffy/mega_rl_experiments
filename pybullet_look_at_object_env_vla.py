@@ -9,66 +9,85 @@ import numpy as np
 
 class CameraController:
     def __init__(self, distance=2.0, yaw=45.0, pitch=-30.0, target_position=[0.0, 0.0, 0.0]):
-        # Default camera parameters
-        self.distance = distance
+        # Camera position in world space
+        self.camera_position = [2.0, 2.0, 1.0]  # Starting position
         self.yaw = yaw
         self.pitch = pitch
-        self.target_position = target_position
-        self.up_axis_index = 2  # Z-axis up (0=X, 1=Y, 2=Z)
+        self.up_axis_index = 2
         
         # Enable mouse picking and keyboard control
         p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
         p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 1)
         
-        # Initialize camera
-        self.reset_camera()
+        self.update_camera()
     
 
-    def reset_camera(self):
-        """Reset camera to default position"""
-        p.resetDebugVisualizerCamera(
-            cameraDistance=self.distance,
-            cameraYaw=self.yaw,
-            cameraPitch=self.pitch,
-            cameraTargetPosition=self.target_position
-        )
-    
-
-    def set_camera_position(self, distance, yaw, pitch, target_position=None):
-        """Programmatically set camera position"""
-        self.distance = distance
-        self.yaw = yaw
-        self.pitch = pitch
-        if target_position is not None:
-            self.target_position = target_position
+    def update_camera(self):
+        """Update camera view based on current position and rotation"""
+        # Calculate look-at point based on camera rotation
+        # Convert angles to radians
+        yaw_rad = np.radians(self.yaw)
+        pitch_rad = np.radians(self.pitch)
+        
+        # Calculate direction vector
+        look_x = np.cos(yaw_rad) * np.cos(pitch_rad)
+        look_y = np.sin(yaw_rad) * np.cos(pitch_rad)
+        look_z = np.sin(pitch_rad)
+        
+        # Calculate target position 1 unit ahead of camera
+        target_position = [
+            self.camera_position[0] + look_x,
+            self.camera_position[1] + look_y,
+            self.camera_position[2] + look_z
+        ]
         
         p.resetDebugVisualizerCamera(
-            cameraDistance=self.distance,
+            cameraDistance=0.1,  # Small distance since we're using absolute positions
             cameraYaw=self.yaw,
             cameraPitch=self.pitch,
-            cameraTargetPosition=self.target_position
+            cameraTargetPosition=target_position
         )
     
 
-    def orbit_camera(self, orbit_speed=0.5):
-        """Orbit camera around target position"""
-        self.yaw += orbit_speed
-        if self.yaw > 360:
-            self.yaw -= 360
+    def move_camera(self, forward=0, right=0, up=0):
+        """Move camera in its local coordinate system"""
+        yaw_rad = np.radians(self.yaw)
         
-        p.resetDebugVisualizerCamera(
-            cameraDistance=self.distance,
-            cameraYaw=self.yaw,
-            cameraPitch=self.pitch,
-            cameraTargetPosition=self.target_position
-        )
+        # Forward/backward movement - along the look direction
+        self.camera_position[0] += -forward * np.sin(yaw_rad)  # Changed signs and using sin/cos
+        self.camera_position[1] += forward * np.cos(yaw_rad)
+        
+        # Left/right movement - perpendicular to look direction
+        self.camera_position[0] += right * np.cos(yaw_rad)
+        self.camera_position[1] += right * np.sin(yaw_rad)
+        
+        # Up/down movement in world space
+        self.camera_position[2] += up
+        
+        self.update_camera()
     
 
     def get_camera_image(self, width=640, height=480):
         """Get RGB and depth image from current camera position"""
+        # Calculate look-at point based on camera rotation (same as in update_camera)
+        yaw_rad = np.radians(self.yaw)
+        pitch_rad = np.radians(self.pitch)
+        
+        # Calculate direction vector
+        look_x = np.cos(yaw_rad) * np.cos(pitch_rad)
+        look_y = np.sin(yaw_rad) * np.cos(pitch_rad)
+        look_z = np.sin(pitch_rad)
+        
+        # Calculate target position 1 unit ahead of camera
+        target_position = [
+            self.camera_position[0] + look_x,
+            self.camera_position[1] + look_y,
+            self.camera_position[2] + look_z
+        ]
+        
         view_matrix = p.computeViewMatrixFromYawPitchRoll(
-            cameraTargetPosition=self.target_position,
-            distance=self.distance,
+            cameraTargetPosition=target_position,
+            distance=0.1,  # Small distance since we're using absolute positions
             yaw=self.yaw,
             pitch=self.pitch,
             roll=0,
@@ -198,14 +217,29 @@ def main():
     yaw = 0
     pitch = 0
     rgb, distance = env.get_observation()
+    translation_amt = 0.02
+    yaw_amt = 0.5
 
     while True:
-        # Handle keyboard input
         keys = p.getKeyboardEvents()
         
         for key, state in keys.items():
-            if state == 3:  # Key press event
-                if key == ord('r'):
+            if state & p.KEY_WAS_TRIGGERED or state & p.KEY_IS_DOWN:  # Handle both initial and held keys
+                if key == ord('a'):
+                    env.camera.yaw += yaw_amt  # Changed from -= to += to fix inversion
+                    env.camera.update_camera()
+                elif key == ord('d'):
+                    env.camera.yaw -= yaw_amt  # Changed from += to -= to fix inversion
+                    env.camera.update_camera()
+                elif key == ord('w'):
+                    env.camera.move_camera(forward=translation_amt)  # Move forward
+                elif key == ord('s'):
+                    env.camera.move_camera(forward=-translation_amt)  # Move backward
+                elif key == ord('q'):
+                    env.camera.move_camera(right=-translation_amt)  # Strafe left
+                elif key == ord('e'):
+                    env.camera.move_camera(right=translation_amt)  # Strafe right
+                elif key == ord('r'):
                     rgb, distance = env.reset()
                     if distance is not None:
                         print(f"Distance to sphere center: {distance:.2f}")
@@ -214,55 +248,7 @@ def main():
                 elif key == ord('q'):
                     p.disconnect()
                     return
-                elif key == ord('a'):
-                    env.camera.yaw -= 5
-                    env.camera.set_camera_position(
-                        env.camera.distance,
-                        env.camera.yaw,
-                        env.camera.pitch
-                    )
-                    rgb, distance = env.get_observation()
-                    if distance is not None:
-                        print(f"Distance to sphere center: {distance:.2f}")
-                elif key == ord('d'):
-                    env.camera.yaw += 5
-                    env.camera.set_camera_position(
-                        env.camera.distance,
-                        env.camera.yaw,
-                        env.camera.pitch
-                    )
-                    rgb, distance = env.get_observation()
-                    if distance is not None:
-                        print(f"Distance to sphere center: {distance:.2f}")
-                elif key == ord('w'):
-                    env.camera.pitch += 5
-                    env.camera.set_camera_position(
-                        env.camera.distance,
-                        env.camera.yaw,
-                        env.camera.pitch
-                    )
-                    rgb, distance = env.get_observation()
-                    if distance is not None:
-                        print(f"Distance to sphere center: {distance:.2f}")
-                elif key == ord('s'):
-                    env.camera.pitch -= 5
-                    env.camera.set_camera_position(
-                        env.camera.distance,
-                        env.camera.yaw,
-                        env.camera.pitch
-                    )
-                    rgb, distance = env.get_observation()
-                    if distance is not None:
-                        print(f"Distance to sphere center: {distance:.2f}")
         
-        # Example: Take random actions
-        # if int(time.time()) % 3 == 0:
-        
-            # action = {
-            #     'yaw': np.random.uniform(-5, 5),
-            #     'pitch': np.random.uniform(-5, 5)
-            # }
-            # rgb, distance = env.step(action)
         if distance is not None:
             print(f"Distance to sphere center: {distance:.2f}")
         
