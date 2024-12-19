@@ -96,7 +96,7 @@ class CameraController:
         self.update_camera()
     
 
-    def get_camera_image(self, width=640, height=480):
+    def get_camera_image(self, width=128, height=96):
         """Get RGB and depth image from current camera position"""
         # Calculate look-at point based on camera rotation
         yaw_rad = np.radians(self.yaw)
@@ -133,7 +133,7 @@ class CameraController:
             height=height,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL
+            renderer=p.ER_TINY_RENDERER
         )
         
         rgb_array = np.array(px, dtype=np.uint8)
@@ -160,12 +160,16 @@ class LookAtObjectEnv(gym.Env):
         self.render_mode = render_mode
         self.connection_mode = p.GUI if render_mode == "human" else p.DIRECT
         
-        # Define action and observation spaces
+        # Reduce image size for faster processing
+        self.image_width = 128  # Reduced from 640
+        self.image_height = 96  # Reduced from 480
+        
+        # Define action and observation spaces with new image size
         self.action_space = spaces.Discrete(len(CameraAction))
         self.observation_space = spaces.Box(
             low=0,
             high=255,
-            shape=(480, 640, 3),
+            shape=(self.image_height, self.image_width, 3),
             dtype=np.uint8
         )
         
@@ -190,16 +194,7 @@ class LookAtObjectEnv(gym.Env):
             p.disconnect()
 
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
-        """Reset the environment
-        
-        Args:
-            seed (Optional[int]): The seed for random number generation
-            options (Optional[dict]): Additional options for reset
-        
-        Returns:
-            observation (np.ndarray): RGB image
-            info (dict): Additional information
-        """
+        """Reset the environment"""
         # Initialize the RNG
         super().reset(seed=seed)
         
@@ -208,8 +203,6 @@ class LookAtObjectEnv(gym.Env):
             p.connect(self.connection_mode)
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
             p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-            # p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
-            # p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
         
         # Load ground plane for reference
         p.loadURDF("plane.urdf")
@@ -220,9 +213,20 @@ class LookAtObjectEnv(gym.Env):
         else:
             self.camera.reset()
         
+        # Calculate sphere position based on camera's initial view
+        yaw_rad = np.radians(self.camera.yaw)
+        pitch_rad = np.radians(self.camera.pitch)
+        
+        # Position sphere 3 units ahead of camera in the direction it's looking
+        distance_ahead = 3.0
+        self.sphere_pos = [
+            self.camera.camera_position[0] + distance_ahead * np.cos(yaw_rad) * np.cos(pitch_rad),
+            self.camera.camera_position[1] + distance_ahead * np.sin(yaw_rad) * np.cos(pitch_rad),
+            self.camera.camera_position[2] + distance_ahead * np.sin(pitch_rad)
+        ]
+        
         # Create or reset target sphere
-        self.sphere_pos = self.target_position.copy()
-        radius = 0.2  # Small radius for better visibility
+        radius = 0.2
         if not hasattr(self, 'sphere_id'):
             sphere_collision = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
             sphere_visual = p.createVisualShape(p.GEOM_SPHERE, radius=radius, rgbaColor=[1, 0, 0, 1])
@@ -239,6 +243,17 @@ class LookAtObjectEnv(gym.Env):
         self.current_step = 0
         rgb, distance = self.get_observation()
         self.previous_distance = distance
+        
+        # Optimize PyBullet settings
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_WIREFRAME, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
+        
+        p.setTimeStep(1./60.)  # Reduce simulation frequency
+        p.setRealTimeSimulation(0)  # Disable real-time simulation
         
         info = {"distance": distance}
         return rgb, info
