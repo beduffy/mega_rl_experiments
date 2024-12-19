@@ -1,78 +1,93 @@
 import time
-import enum
 from typing import Tuple, Optional
 
 import pybullet as p
-import pybullet_data
 import numpy as np
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.monitor import Monitor
 
-from py
+from pybullet_look_at_object_env_vla import LookAtObjectEnv
 
-def human_control_main():
-    """Test environment with keyboard controls"""
+
+def make_env():
+    """Create and wrap the environment"""
     env = LookAtObjectEnv()
+    # Wrap env in Monitor to log training stats
+    env = Monitor(env)
+    return env
+
+
+def train():
+    """Train the PPO agent"""
+    # Create environment
+    env = make_env()
     
-    print("\nCamera Controls:")
-    print("- A/D: Rotate camera left/right")
-    print("- W/S: Move forward/backward")
-    print("- Q/E: Strafe left/right")
-    print("- Up/Down: Look up/down")
-    print("- R: Reset environment")
-    print("- P: Print camera parameters")
-    print("- Esc: Quit")
+    # Verify the environment follows gym interface
+    check_env(env)
     
-    print_interval = 0.1
-    last_print_time = time.time()
+    # Create the PPO agent
+    model = PPO(
+        "CnnPolicy",  # Use CNN policy since we have image observations
+        env,
+        verbose=1,
+        learning_rate=3e-4,
+        n_steps=2048,
+        batch_size=64,
+        n_epochs=10,
+        gamma=0.99,
+        gae_lambda=0.95,
+        clip_range=0.2,
+        tensorboard_log="./ppo_camera_tensorboard/"
+    )
     
-    rgb, info = env.reset()
+    # Setup automatic checkpointing
+    checkpoint_callback = CheckpointCallback(
+        save_freq=10000,
+        save_path="./ppo_camera_checkpoints/",
+        name_prefix="camera_model"
+    )
     
-    try:
-        while True:
-            keys = p.getKeyboardEvents()
-            
-            for key, state in keys.items():
-                if state & p.KEY_WAS_TRIGGERED or state & p.KEY_IS_DOWN:
-                    action = None
-                    
-                    if key == ord('a'):
-                        action = CameraAction.YAW_LEFT
-                    elif key == ord('d'):
-                        action = CameraAction.YAW_RIGHT
-                    elif key == ord('w'):
-                        action = CameraAction.MOVE_FORWARD
-                    elif key == ord('s'):
-                        action = CameraAction.MOVE_BACKWARD
-                    elif key == ord('q'):
-                        action = CameraAction.STRAFE_LEFT
-                    elif key == ord('e'):
-                        action = CameraAction.STRAFE_RIGHT
-                    elif key == p.B3G_UP_ARROW:
-                        action = CameraAction.PITCH_UP
-                    elif key == p.B3G_DOWN_ARROW:
-                        action = CameraAction.PITCH_DOWN
-                    elif key == ord('r'):
-                        rgb, info = env.reset()
-                    elif key == ord('p'):
-                        env.camera.print_current_camera_params()
-                    
-                    if action is not None:
-                        rgb, reward, terminated, truncated, info = env.step(action)
-                        
-                        if time.time() - last_print_time >= print_interval:
-                            distance_str = f"{info['distance']:.2f}" if info['distance'] is not None else "None"
-                            print(f"Step {env.current_step}: reward={reward:.2f}, distance={distance_str}")
-                            last_print_time = time.time()
-                        
-                        if terminated or truncated:
-                            print("Episode finished!")
-                            rgb, info = env.reset()
+    # Train the agent
+    total_timesteps = 1_000_000
+    model.learn(
+        total_timesteps=total_timesteps,
+        callback=checkpoint_callback,
+        progress_bar=True
+    )
+    
+    # Save the final model
+    model.save("ppo_camera_final")
+
+
+def evaluate(model_path: str, num_episodes: int = 10):
+    """Evaluate a trained model"""
+    env = make_env()
+    model = PPO.load(model_path)
+    
+    for episode in range(num_episodes):
+        obs, info = env.reset()
+        episode_reward = 0
+        done = False
+        truncated = False
+        
+        while not (done or truncated):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, done, truncated, info = env.step(action)
+            episode_reward += reward
             
             p.stepSimulation()
             time.sleep(1./240.)
+        
+        print(f"Episode {episode + 1}: Reward = {episode_reward}")
     
-    finally:
-        env.close()
+    env.close()
 
 
 if __name__ == "__main__":
-    human_control_main()
+    # Train the agent
+    train()
+    
+    # Evaluate the trained model
+    evaluate("ppo_camera_final")
