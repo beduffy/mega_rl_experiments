@@ -9,11 +9,16 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import CallbackList
 
 from pybullet_look_at_object_env import LookAtObjectEnv
 
 
 # TODO surely LLMs could sit beside RL algorithms and give them lots of pointer on what to do and how to change things and then train everything by RL to be 1000000 more sample efficient?
+
+
+# TODO
+# FPS began at 60 and went to 15 fps and then eventually segmentation fault (core dumped). Memory leak or something? lets find and fix. @train_rl_look_at_object.py @camera_controller.py  
 
 
 def make_env():
@@ -53,51 +58,62 @@ def train():
                 pi=[64, 64],  # Policy network
                 vf=[64, 64]   # Value function network
             )
-        )
+        ),
+        # Add these parameters
+        # ent_coef=0.01,          # Add entropy for exploration
+        # vf_coef=0.5,            # Value function coefficient
     )
     
+    # Load the model and set its environment
+    # model = PPO.load(
+    #     "./ppo_camera_checkpoints/PPO_Camera_20241220_000145/camera_model_10000_steps",
+    #     "./ppo_camera_checkpoints/PPO_Camera_20241220_000145/camera_model_10000_steps",
+    #     env=env,  # Add this line
+    #     print_system_info=True
+    # )
+
     # Create a custom callback to log additional metrics
     class TensorboardCallback(BaseCallback):
         def __init__(self, verbose=0):
             super().__init__(verbose)
-            self.episode_rewards = []
-            self.episode_lengths = []
-            self.episode_step_counter = 0  # Add step counter
+            # self.episode_rewards = []
+            # self.episode_lengths = []
+            self.episode_step_counter = 0
         
         def _on_step(self):
-            self.episode_step_counter += 1  # Increment counter each step
+            self.episode_step_counter += 1
             
             if self.locals.get('done'):
-                # Log episode metrics
-                # TODO they seem broken
+                # Log metrics directly without storing in lists
                 episode_reward = self.locals['rewards'][0]
-                episode_length = self.episode_step_counter  # Use the counter instead of dones.sum()
-                print(f"Episode reward: {episode_reward}, length: {episode_length}")
+                episode_length = self.episode_step_counter
                 self.logger.record('custom/episode_reward', episode_reward)
                 self.logger.record('custom/episode_length', episode_length)
-                # Log environment info
                 if 'distance' in self.locals['infos'][0]:
                     self.logger.record('env/target_distance', self.locals['infos'][0]['distance'])
-                self.episode_step_counter = 0  # Reset counter when episode ends
+                self.episode_step_counter = 0
+                
+                # Force garbage collection after each episode
+                import gc
+                gc.collect()
             return True
     
     # Combine callbacks
-    from stable_baselines3.common.callbacks import CallbackList
-    callbacks = CallbackList([
-        CheckpointCallback(
-            save_freq=10000,
-            save_path=f"./ppo_camera_checkpoints/{run_name}/",
-            name_prefix="camera_model",
-            verbose=1
-        ),
-        TensorboardCallback()
-    ])
+    # callbacks = CallbackList([
+    #     CheckpointCallback(
+    #         save_freq=10000,
+    #         save_path=f"./ppo_camera_checkpoints/{run_name}/",
+    #         name_prefix="camera_model",
+    #         verbose=1
+    #     ),
+    #     TensorboardCallback()
+    # ])
     
     # Train the agent
     total_timesteps = 1_000_000
     model.learn(
         total_timesteps=total_timesteps,
-        callback=callbacks,
+        # callback=callbacks,
         progress_bar=True,
         log_interval=1  # Log every step
     )
