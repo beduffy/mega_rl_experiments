@@ -37,7 +37,7 @@ class LookAtObjectEnv(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         
-        # Load MuJoCo model
+        # Load MuJoCo model with modified camera setup
         self.model = mujoco.MjModel.from_xml_string("""
         <mujoco>
             <worldbody>
@@ -46,7 +46,10 @@ class LookAtObjectEnv(gym.Env):
                 <body name="target_sphere" pos="3 2.5 2">
                     <geom type="sphere" size="0.2" rgba="1 0 0 1"/>
                 </body>
-                <camera name="rgb_camera" pos="0 0 2" euler="0 0 0"/>
+                <body name="camera_body" pos="0 0 2">
+                    <camera name="rgb_camera" mode="fixed"/>
+                    <joint type="free"/>
+                </body>
             </worldbody>
         </mujoco>
         """)
@@ -56,6 +59,7 @@ class LookAtObjectEnv(gym.Env):
         self.image_width = 128
         self.image_height = 96
         self.camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "rgb_camera")
+        self.camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "camera_body")
         
         # Define action and observation spaces with new image size
         self.action_space = spaces.Discrete(len(CameraAction))
@@ -91,16 +95,18 @@ class LookAtObjectEnv(gym.Env):
         """Reset the environment"""
         super().reset(seed=seed)
         
-        # Reset camera position
-        camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "rgb_camera")
-        self.data.qpos[camera_body_id] = np.array([0, 0, 2])  # x, y, z
-        self.data.qpos[camera_body_id + 3] = np.array([0, 0, 0])  # roll, pitch, yaw
+        # Reset camera position and orientation
+        mujoco.mj_resetData(self.model, self.data)
+        
+        # Set initial camera pose
+        self.data.qpos[self.camera_body_id*7:(self.camera_body_id*7)+3] = [0, 0, 2]  # x, y, z position
+        self.data.qpos[(self.camera_body_id*7)+3:(self.camera_body_id*7)+7] = [1, 0, 0, 0]  # quaternion orientation
         
         # Randomize sphere position (left vs right)
         positions = [(3.0, 2.5, 2.0), (3.0, -2.5, 2.0)]
         sphere_pos = positions[np.random.choice(2)]
         sphere_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target_sphere")
-        self.data.qpos[sphere_body_id] = np.array(sphere_pos)
+        self.data.qpos[sphere_body_id*7:(sphere_body_id*7)+3] = sphere_pos
         
         mujoco.mj_forward(self.model, self.data)
         rgb, distance = self.get_observation()
@@ -125,20 +131,28 @@ class LookAtObjectEnv(gym.Env):
         """
         self.current_step += 1
         
-        # Get camera body ID
-        camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "rgb_camera")
+        # Get current camera pose
+        pos_start = self.camera_body_id * 7
+        quat_start = pos_start + 3
         
         # Apply action
         if action == CameraAction.YAW_LEFT:
-            self.data.qpos[camera_body_id + 5] += np.radians(self.yaw_delta)
+            # Apply rotation using quaternions
+            rot = mujoco.rotations.euler2quat([0, 0, np.radians(self.yaw_delta)])
+            current_quat = self.data.qpos[quat_start:quat_start+4]
+            new_quat = mujoco.rotations.quat_mul(current_quat, rot)
+            self.data.qpos[quat_start:quat_start+4] = new_quat
         elif action == CameraAction.YAW_RIGHT:
-            self.data.qpos[camera_body_id + 5] -= np.radians(self.yaw_delta)
+            rot = mujoco.rotations.euler2quat([0, 0, -np.radians(self.yaw_delta)])
+            current_quat = self.data.qpos[quat_start:quat_start+4]
+            new_quat = mujoco.rotations.quat_mul(current_quat, rot)
+            self.data.qpos[quat_start:quat_start+4] = new_quat
         elif action == CameraAction.MOVE_FORWARD:
             forward = self.get_camera_forward()
-            self.data.qpos[camera_body_id:camera_body_id + 3] += forward * self.translation_delta
+            self.data.qpos[pos_start:pos_start+3] += forward * self.translation_delta
         elif action == CameraAction.MOVE_BACKWARD:
             forward = self.get_camera_forward()
-            self.data.qpos[camera_body_id:camera_body_id + 3] -= forward * self.translation_delta
+            self.data.qpos[pos_start:pos_start+3] -= forward * self.translation_delta
         
         mujoco.mj_forward(self.model, self.data)
         
@@ -226,75 +240,77 @@ class LookAtObjectEnv(gym.Env):
 
     def get_camera_forward(self):
         """Calculate camera forward vector based on orientation"""
-        camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "rgb_camera")
-        yaw = self.data.qpos[camera_body_id + 5]
-        return np.array([np.cos(yaw), np.sin(yaw), 0])
+        quat_start = self.camera_body_id * 7 + 3
+        quat = self.data.qpos[quat_start:quat_start+4]
+        # Convert quaternion to rotation matrix and get forward vector
+        rot_mat = mujoco.rotations.quat2mat(quat)
+        return rot_mat[:, 0]  # First column is forward direction
 
 
 def human_control_main():
     """Test environment with keyboard controls"""
+    import pygame
+    
+    pygame.init()
+    screen = pygame.display.set_mode((128, 96))
     env = LookAtObjectEnv()
     
     print("\nCamera Controls:")
     print("- A/D: Rotate camera left/right")
     print("- W/S: Move forward/backward")
-    print("- Q/E: Strafe left/right")
-    print("- Up/Down: Look up/down")
     print("- R: Reset environment")
-    print("- P: Print camera parameters")
     print("- Esc: Quit")
     
     print_interval = 0.1
     last_print_time = time.time()
     
     rgb, info = env.reset()
+    running = True
     
     try:
-        while True:
-            keys = p.getKeyboardEvents()
-            
-            for key, state in keys.items():
-                if state & p.KEY_WAS_TRIGGERED or state & p.KEY_IS_DOWN:
-                    action = None
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
                     
-                    if key == ord('a'):
-                        action = CameraAction.YAW_LEFT
-                    elif key == ord('d'):
-                        action = CameraAction.YAW_RIGHT
-                    elif key == ord('w'):
-                        action = CameraAction.MOVE_FORWARD
-                    elif key == ord('s'):
-                        action = CameraAction.STRAFE_RIGHT
-                    elif key == ord('q'):
-                        action = CameraAction.STRAFE_LEFT
-                    elif key == ord('e'):
-                        action = CameraAction.STRAFE_RIGHT
-                    elif key == p.B3G_UP_ARROW:
-                        action = CameraAction.PITCH_UP
-                    elif key == p.B3G_DOWN_ARROW:
-                        action = CameraAction.PITCH_DOWN
-                    elif key == ord('r'):
-                        rgb, info = env.reset()
-                    elif key == ord('p'):
-                        env.camera.print_current_camera_params()
-                    
-                    if action is not None:
-                        rgb, reward, terminated, truncated, info = env.step(action)
-                        
-                        if time.time() - last_print_time >= print_interval:
-                            distance_str = f"{info['distance']:.2f}" if info['distance'] is not None else "None"
-                            print(f"Step {env.current_step}: reward={reward:.2f}, distance={distance_str}")
-                            last_print_time = time.time()
-                        
-                        if terminated or truncated:
-                            print("Episode finished!")
-                            rgb, info = env.reset()
+            keys = pygame.key.get_pressed()
+            action = None
             
-            p.stepSimulation()
-            time.sleep(1./240.)
+            if keys[pygame.K_a]:
+                action = CameraAction.YAW_LEFT
+            elif keys[pygame.K_d]:
+                action = CameraAction.YAW_RIGHT
+            elif keys[pygame.K_w]:
+                action = CameraAction.MOVE_FORWARD
+            elif keys[pygame.K_s]:
+                action = CameraAction.MOVE_BACKWARD
+            elif keys[pygame.K_r]:
+                rgb, info = env.reset()
+            elif keys[pygame.K_ESCAPE]:
+                running = False
+            
+            if action is not None:
+                rgb, reward, terminated, truncated, info = env.step(action)
+                
+                if time.time() - last_print_time >= print_interval:
+                    distance_str = f"{info['distance']:.2f}" if info['distance'] is not None else "None"
+                    print(f"Step {env.current_step}: reward={reward:.2f}, distance={distance_str}")
+                    last_print_time = time.time()
+                
+                if terminated or truncated:
+                    print("Episode finished!")
+                    rgb, info = env.reset()
+            
+            # Display the camera view
+            surface = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
+            screen.blit(surface, (0, 0))
+            pygame.display.flip()
+            
+            time.sleep(1./60.)
     
     finally:
         env.close()
+        pygame.quit()
 
 
 if __name__ == "__main__":
