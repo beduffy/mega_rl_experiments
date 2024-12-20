@@ -20,13 +20,15 @@ class CameraAction(enum.IntEnum):
     """Discrete actions for camera control"""
     YAW_LEFT = 0
     YAW_RIGHT = 1
-    PITCH_UP = 2
-    PITCH_DOWN = 3
-    MOVE_FORWARD = 4
-    MOVE_BACKWARD = 5
-    STRAFE_LEFT = 6
-    STRAFE_RIGHT = 7
-    NO_OP = 8
+    MOVE_FORWARD = 2
+    MOVE_BACKWARD = 3
+    # TODO removing some for now to make problem easier. 
+    # TODO could do experiments with many actions that do nothing. credit assignment lol
+    # PITCH_UP = 2
+    # PITCH_DOWN = 3
+    # STRAFE_LEFT = 6
+    # STRAFE_RIGHT = 7
+    # NO_OP = 8
 
 
 class LookAtObjectEnv(gym.Env):
@@ -36,6 +38,8 @@ class LookAtObjectEnv(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         self.connection_mode = p.GUI if render_mode == "human" else p.DIRECT
+        p.connect(self.connection_mode)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
         
         # Reduce image size for faster processing
         self.image_width = 128  # Reduced from 640
@@ -43,6 +47,7 @@ class LookAtObjectEnv(gym.Env):
         
         # Define action and observation spaces with new image size
         self.action_space = spaces.Discrete(len(CameraAction))
+        print(f"Action space: {self.action_space}")
         self.observation_space = spaces.Box(
             low=0,
             high=255,
@@ -73,14 +78,16 @@ class LookAtObjectEnv(gym.Env):
 
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
         """Reset the environment"""
+        # Disconnect previous session if exists
+        # if p.isConnected():
+        #     p.disconnect()
+        
+        # Connect to PyBullet
+        # # p.connect(self.connection_mode)
+        # p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        
         # Initialize the RNG
         super().reset(seed=seed)
-        
-        # Connect to PyBullet if not already connected
-        if not p.isConnected():
-            p.connect(self.connection_mode)
-            p.setAdditionalSearchPath(pybullet_data.getDataPath())
-            # p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
         
         # Load ground plane for reference
         p.loadURDF("plane.urdf")
@@ -147,7 +154,7 @@ class LookAtObjectEnv(gym.Env):
         p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
         
-        p.setTimeStep(1./60.)  # Reduce simulation frequency
+        # p.setTimeStep(1./60.)  # Reduce simulation frequency
         p.setRealTimeSimulation(0)  # Disable real-time simulation
         
         info = {"distance": distance}
@@ -174,18 +181,18 @@ class LookAtObjectEnv(gym.Env):
             self.camera.yaw += self.yaw_delta
         elif action == CameraAction.YAW_RIGHT:
             self.camera.yaw -= self.yaw_delta
-        elif action == CameraAction.PITCH_UP:
-            self.camera.pitch = min(89, self.camera.pitch + self.pitch_delta)
-        elif action == CameraAction.PITCH_DOWN:
-            self.camera.pitch = max(-89, self.camera.pitch - self.pitch_delta)
+        # elif action == CameraAction.PITCH_UP:
+        #     self.camera.pitch = min(89, self.camera.pitch + self.pitch_delta)
+        # elif action == CameraAction.PITCH_DOWN:
+        #     self.camera.pitch = max(-89, self.camera.pitch - self.pitch_delta)
         elif action == CameraAction.MOVE_FORWARD:
             self.camera.move_camera(forward=self.translation_delta)    # This should move forward
         elif action == CameraAction.MOVE_BACKWARD:
             self.camera.move_camera(forward=-self.translation_delta)   # This should move backward
-        elif action == CameraAction.STRAFE_LEFT:
-            self.camera.move_camera(right=-self.translation_delta)     # This should strafe left
-        elif action == CameraAction.STRAFE_RIGHT:
-            self.camera.move_camera(right=self.translation_delta)      # This should strafe right
+        # elif action == CameraAction.STRAFE_LEFT:
+        #     self.camera.move_camera(right=-self.translation_delta)     # This should strafe left
+        # elif action == CameraAction.STRAFE_RIGHT:
+        #     self.camera.move_camera(right=self.translation_delta)      # This should strafe right
         
         self.camera.update_camera()
         
@@ -240,17 +247,19 @@ class LookAtObjectEnv(gym.Env):
     
 
     def get_observation(self) -> Tuple[np.ndarray, Optional[float]]:
-        """Get current observation from environment
-        
-        Returns:
-            rgb (np.ndarray): RGB image
-            distance (float): Distance from image center to target center
-        """
+        """Get current observation from environment"""
+        # Explicitly delete previous RGB and depth images
         rgb, depth = self.camera.get_camera_image()
         
-        # Find red sphere in image (simple color thresholding)
+        # Convert to uint8 to reduce memory usage
+        rgb = np.asarray(rgb, dtype=np.uint8)
+        
+        # Process red mask using uint8 operations
         red_mask = (rgb[:,:,0] > 200) & (rgb[:,:,1] < 50) & (rgb[:,:,2] < 50)
         sphere_pixels = np.where(red_mask)
+        
+        # Clear depth buffer as it's not needed
+        del depth
         
         if len(sphere_pixels[0]) == 0:
             return rgb, None
