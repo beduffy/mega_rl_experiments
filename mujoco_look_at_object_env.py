@@ -4,6 +4,7 @@ from typing import Tuple, Optional
 
 import mujoco
 import numpy as np
+from scipy.spatial.transform import Rotation
 import gymnasium as gym
 from gymnasium import spaces
 
@@ -138,18 +139,7 @@ class LookAtObjectEnv(gym.Env):
     
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, dict]:
-        """Take a step in the environment
-        
-        Args:
-            action (int): Action from CameraAction enum
-        
-        Returns:
-            observation (np.ndarray): RGB image
-            reward (float): Reward for the action
-            terminated (bool): Whether episode is done
-            truncated (bool): Whether episode was truncated
-            info (dict): Additional information
-        """
+        """Take a step in the environment"""
         self.current_step += 1
         
         # Get current camera pose indices
@@ -159,15 +149,22 @@ class LookAtObjectEnv(gym.Env):
         
         # Apply action
         if action == CameraAction.YAW_LEFT:
-            rot = mujoco.rotations.euler2quat([0, 0, np.radians(self.yaw_delta)])
+            # Create rotation using scipy
+            rot = Rotation.from_euler('z', self.yaw_delta, degrees=True)
             current_quat = self.data.qpos[quat_start:quat_start+4]
-            new_quat = mujoco.rotations.quat_mul(current_quat, rot)
-            self.data.qpos[quat_start:quat_start+4] = new_quat
+            # Convert from MuJoCo [w,x,y,z] to scipy [x,y,z,w] format
+            current_rot = Rotation.from_quat([current_quat[1], current_quat[2], current_quat[3], current_quat[0]])
+            new_rot = rot * current_rot
+            # Convert back to MuJoCo quaternion format
+            new_quat = new_rot.as_quat()
+            self.data.qpos[quat_start:quat_start+4] = [new_quat[3], new_quat[0], new_quat[1], new_quat[2]]
         elif action == CameraAction.YAW_RIGHT:
-            rot = mujoco.rotations.euler2quat([0, 0, -np.radians(self.yaw_delta)])
+            rot = Rotation.from_euler('z', -self.yaw_delta, degrees=True)
             current_quat = self.data.qpos[quat_start:quat_start+4]
-            new_quat = mujoco.rotations.quat_mul(current_quat, rot)
-            self.data.qpos[quat_start:quat_start+4] = new_quat
+            current_rot = Rotation.from_quat([current_quat[1], current_quat[2], current_quat[3], current_quat[0]])
+            new_rot = rot * current_rot
+            new_quat = new_rot.as_quat()
+            self.data.qpos[quat_start:quat_start+4] = [new_quat[3], new_quat[0], new_quat[1], new_quat[2]]
         elif action == CameraAction.MOVE_FORWARD:
             forward = self.get_camera_forward()
             self.data.qpos[pos_start:pos_start+3] += forward * self.translation_delta
@@ -264,8 +261,10 @@ class LookAtObjectEnv(gym.Env):
         """Calculate camera forward vector based on orientation"""
         quat_start = 7 * self.sphere_body_id + 3
         quat = self.data.qpos[quat_start:quat_start+4]
-        rot_mat = mujoco.rotations.quat2mat(quat)
-        return rot_mat[:, 0]  # First column is forward direction
+        # Convert from MuJoCo [w,x,y,z] to scipy [x,y,z,w] format
+        rot = Rotation.from_quat([quat[1], quat[2], quat[3], quat[0]])
+        # Get rotation matrix and extract forward vector
+        return rot.as_matrix()[:, 0]
 
 
 def human_control_main():
