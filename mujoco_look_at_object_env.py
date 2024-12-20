@@ -37,6 +37,10 @@ class LookAtObjectEnv(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         
+        # Camera settings - make window bigger
+        self.image_width = 640
+        self.image_height = 480
+        
         # Load MuJoCo model with modified camera setup and proper inertial properties
         self.model = mujoco.MjModel.from_xml_string("""
         <mujoco>
@@ -96,11 +100,14 @@ class LookAtObjectEnv(gym.Env):
         
         # Target position
         self.target_position = [0.0, 0.0, 2.0]
+        
+        # Initialize renderer
+        self.renderer = mujoco.Renderer(self.model, height=self.image_height, width=self.image_width)
     
 
     def close(self):
         """Clean up environment resources"""
-        pass  # MuJoCo doesn't require explicit cleanup
+        pass  # Remove renderer.close() as it's not needed
 
 
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
@@ -223,10 +230,11 @@ class LookAtObjectEnv(gym.Env):
     def get_observation(self) -> Tuple[np.ndarray, Optional[float]]:
         """Get current observation from environment"""
         # Render camera view
-        rgb = mujoco.mj_render(self.model, self.data, 
-                              width=self.image_width,
-                              height=self.image_height,
-                              camera=self.camera_id)
+        self.renderer.update_scene(self.data)  # Remove camera parameter to use default view
+        rgb = self.renderer.render()
+        
+        # Convert from float32 [0,1] to uint8 [0,255]
+        rgb = (rgb * 255).astype(np.uint8)
         
         # Process red mask
         red_mask = (rgb[:,:,0] > 200) & (rgb[:,:,1] < 50) & (rgb[:,:,2] < 50)
@@ -265,8 +273,11 @@ def human_control_main():
     import pygame
     
     pygame.init()
-    screen = pygame.display.set_mode((128, 96))
+    screen = pygame.display.set_mode((640, 480))  # Match environment dimensions
+    pygame.display.set_caption("Camera Control Environment")
+    
     env = LookAtObjectEnv()
+    clock = pygame.time.Clock()  # Add clock for consistent framerate
     
     print("\nCamera Controls:")
     print("- A/D: Rotate camera left/right")
@@ -314,12 +325,13 @@ def human_control_main():
                     print("Episode finished!")
                     rgb, info = env.reset()
             
-            # Display the camera view
+            # Convert numpy array to pygame surface and display
+            rgb = rgb[:, :, :3]  # Ensure only RGB channels
             surface = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
             screen.blit(surface, (0, 0))
             pygame.display.flip()
             
-            time.sleep(1./60.)
+            clock.tick(60)  # Limit to 60 FPS
     
     finally:
         env.close()
