@@ -5,7 +5,7 @@ import numpy as np
 class CameraController:
     def __init__(self, distance=2.0, yaw=0.0, pitch=0.0):
         # Camera position in world space
-        self.camera_position = [0.0, -3.0, 2.0]  # Starting position
+        self.camera_position = [0.0, 0.0, 2.0]  # Starting position
         self.yaw = yaw
         self.pitch = pitch
         self.up_axis_index = 2
@@ -57,7 +57,8 @@ class CameraController:
 
     def move_camera(self, forward=0, right=0, up=0):
         """Move camera in its local coordinate system"""
-        yaw_rad = np.radians(self.yaw)
+        # Use yaw - 90 to match the visualization orientation
+        yaw_rad = np.radians(self.yaw - 90)
         
         # Forward/backward movement - along the look direction
         self.camera_position[0] += -forward * np.sin(yaw_rad)

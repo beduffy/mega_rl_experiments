@@ -13,6 +13,7 @@ from camera_controller import CameraController
 # TODO do I want action primitives or some form of continuous action e.g. directly set yaw to 85 degrees rather than lots of discrete actions
 # TODO claude 3.5 did badly. I think I need a real VLA model.
 # TODO does it get slower over time?
+# TODO curriculum learning, first begin with left vs right,, then larger randomness in left vs right, then anywhere so it has to hunt for it
 
 
 class CameraAction(enum.IntEnum):
@@ -69,6 +70,7 @@ class LookAtObjectEnv(gym.Env):
         if p.isConnected():
             p.disconnect()
 
+
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
         """Reset the environment"""
         # Initialize the RNG
@@ -78,7 +80,7 @@ class LookAtObjectEnv(gym.Env):
         if not p.isConnected():
             p.connect(self.connection_mode)
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
-            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+            # p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
         
         # Load ground plane for reference
         p.loadURDF("plane.urdf")
@@ -92,17 +94,32 @@ class LookAtObjectEnv(gym.Env):
         # Calculate sphere position based on camera's initial view
         yaw_rad = np.radians(self.camera.yaw)
         pitch_rad = np.radians(self.camera.pitch)
+
+        # TODO camera controller class is completely messed up in terms of params of direction etc.
         
         # Position sphere 3 units ahead of camera in the direction it's looking
-        distance_ahead = 3.0
-        self.sphere_pos = [
-            self.camera.camera_position[0] + distance_ahead * np.cos(yaw_rad) * np.cos(pitch_rad),
-            self.camera.camera_position[1] + distance_ahead * np.sin(yaw_rad) * np.cos(pitch_rad),
-            self.camera.camera_position[2] + distance_ahead * np.sin(pitch_rad)
-        ]
+        # distance_ahead = 3.0
+        # self.sphere_pos = [
+        #     self.camera.camera_position[0] + distance_ahead * np.cos(yaw_rad) * np.cos(pitch_rad),
+        #     self.camera.camera_position[1] + distance_ahead * np.sin(yaw_rad) * np.cos(pitch_rad),
+        #     self.camera.camera_position[2] + distance_ahead * np.sin(pitch_rad)
+        # ]
 
-        self.sphere_pos[1] = 0.05
+        # self.sphere_pos = [1, 3.0, 2.0]
+        # self.sphere_pos = [0.3420201539993286, -2.060307264328003, 2.0]
+        # self.sphere_pos = [3.0, 2.5, 2.0]  # finally, this is to the left if camera starts origin
+        # self.sphere_pos = [3.0, -2.5, 2.0]  # finally, this is to the right
+        # self.sphere_pos[1] = np.random.choice([0.2, -0.05])
+        # self.sphere_pos[1] = np.random.choice([-0.2])
+        # Randomize x position between -5 and 5
+        # self.sphere_pos[0] = np.random.uniform(-5.0, 5.0)
+        # self.sphere_pos[0] = -0.05
         
+        # left vs right
+        positions = [(3.0, 2.5, 2.0), (3.0, -2.5, 2.0)]
+        self.sphere_pos = positions[np.random.choice(2)]
+        
+
         # Create or reset target sphere
         radius = 0.2
         if not hasattr(self, 'sphere_id'):
@@ -125,8 +142,8 @@ class LookAtObjectEnv(gym.Env):
         # Optimize PyBullet settings
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
-        p.configureDebugVisualizer(p.COV_ENABLE_WIREFRAME, 0)
-        p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
+        # p.configureDebugVisualizer(p.COV_ENABLE_WIREFRAME, 0)
+        # p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
         
@@ -162,15 +179,13 @@ class LookAtObjectEnv(gym.Env):
         elif action == CameraAction.PITCH_DOWN:
             self.camera.pitch = max(-89, self.camera.pitch - self.pitch_delta)
         elif action == CameraAction.MOVE_FORWARD:
-            self.camera.move_camera(forward=self.translation_delta)
+            self.camera.move_camera(forward=self.translation_delta)    # This should move forward
         elif action == CameraAction.MOVE_BACKWARD:
-            self.camera.move_camera(forward=-self.translation_delta)
+            self.camera.move_camera(forward=-self.translation_delta)   # This should move backward
         elif action == CameraAction.STRAFE_LEFT:
-            self.camera.move_camera(right=-self.translation_delta)
+            self.camera.move_camera(right=-self.translation_delta)     # This should strafe left
         elif action == CameraAction.STRAFE_RIGHT:
-            self.camera.move_camera(right=self.translation_delta)
-        elif action == CameraAction.NO_OP:
-            pass
+            self.camera.move_camera(right=self.translation_delta)      # This should strafe right
         
         self.camera.update_camera()
         
@@ -183,6 +198,7 @@ class LookAtObjectEnv(gym.Env):
         # Check if done
         terminated = False
         if distance is not None and distance < self.target_distance_threshold:
+            print("Target centered in view!!!!\n\n")
             terminated = True  # Success - target centered in view
             reward += 10.0  # Bonus reward for success
         
@@ -289,7 +305,7 @@ def human_control_main():
                     elif key == ord('w'):
                         action = CameraAction.MOVE_FORWARD
                     elif key == ord('s'):
-                        action = CameraAction.MOVE_BACKWARD
+                        action = CameraAction.STRAFE_RIGHT
                     elif key == ord('q'):
                         action = CameraAction.STRAFE_LEFT
                     elif key == ord('e'):

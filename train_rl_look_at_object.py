@@ -13,6 +13,9 @@ from stable_baselines3.common.callbacks import BaseCallback
 from pybullet_look_at_object_env import LookAtObjectEnv
 
 
+# TODO surely LLMs could sit beside RL algorithms and give them lots of pointer on what to do and how to change things and then train everything by RL to be 1000000 more sample efficient?
+
+
 def make_env():
     """Create and wrap the environment"""
     # env = LookAtObjectEnv()
@@ -59,25 +62,30 @@ def train():
             super().__init__(verbose)
             self.episode_rewards = []
             self.episode_lengths = []
+            self.episode_step_counter = 0  # Add step counter
         
         def _on_step(self):
+            self.episode_step_counter += 1  # Increment counter each step
+            
             if self.locals.get('done'):
                 # Log episode metrics
+                # TODO they seem broken
                 episode_reward = self.locals['rewards'][0]
-                episode_length = self.locals['dones'].sum()
+                episode_length = self.episode_step_counter  # Use the counter instead of dones.sum()
                 print(f"Episode reward: {episode_reward}, length: {episode_length}")
                 self.logger.record('custom/episode_reward', episode_reward)
                 self.logger.record('custom/episode_length', episode_length)
                 # Log environment info
                 if 'distance' in self.locals['infos'][0]:
                     self.logger.record('env/target_distance', self.locals['infos'][0]['distance'])
+                self.episode_step_counter = 0  # Reset counter when episode ends
             return True
     
     # Combine callbacks
     from stable_baselines3.common.callbacks import CallbackList
     callbacks = CallbackList([
         CheckpointCallback(
-            save_freq=100,
+            save_freq=10000,
             save_path=f"./ppo_camera_checkpoints/{run_name}/",
             name_prefix="camera_model",
             verbose=1
