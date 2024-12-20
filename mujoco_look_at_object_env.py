@@ -2,8 +2,7 @@ import time
 import enum
 from typing import Tuple, Optional
 
-import pybullet as p
-import pybullet_data
+import mujoco
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -37,13 +36,26 @@ class LookAtObjectEnv(gym.Env):
     def __init__(self, render_mode="human"):
         super().__init__()
         self.render_mode = render_mode
-        self.connection_mode = p.GUI if render_mode == "human" else p.DIRECT
-        p.connect(self.connection_mode)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
         
-        # Reduce image size for faster processing
-        self.image_width = 128  # Reduced from 640
-        self.image_height = 96  # Reduced from 480
+        # Load MuJoCo model
+        self.model = mujoco.MjModel.from_xml_string("""
+        <mujoco>
+            <worldbody>
+                <light pos="0 0 3" dir="0 0 -1" castshadow="false"/>
+                <geom type="plane" size="10 10 0.1" rgba=".9 .9 .9 1"/>
+                <body name="target_sphere" pos="3 2.5 2">
+                    <geom type="sphere" size="0.2" rgba="1 0 0 1"/>
+                </body>
+                <camera name="rgb_camera" pos="0 0 2" euler="0 0 0"/>
+            </worldbody>
+        </mujoco>
+        """)
+        self.data = mujoco.MjData(self.model)
+        
+        # Camera settings
+        self.image_width = 128
+        self.image_height = 96
+        self.camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "rgb_camera")
         
         # Define action and observation spaces with new image size
         self.action_space = spaces.Discrete(len(CameraAction))
@@ -72,90 +84,27 @@ class LookAtObjectEnv(gym.Env):
 
     def close(self):
         """Clean up environment resources"""
-        if p.isConnected():
-            p.disconnect()
+        pass  # MuJoCo doesn't require explicit cleanup
 
 
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
         """Reset the environment"""
-        # Disconnect previous session if exists
-        # if p.isConnected():
-        #     p.disconnect()
-        
-        # Connect to PyBullet
-        # # p.connect(self.connection_mode)
-        # p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        
-        # Initialize the RNG
         super().reset(seed=seed)
         
-        # Load ground plane for reference
-        p.loadURDF("plane.urdf")
+        # Reset camera position
+        camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "rgb_camera")
+        self.data.qpos[camera_body_id] = np.array([0, 0, 2])  # x, y, z
+        self.data.qpos[camera_body_id + 3] = np.array([0, 0, 0])  # roll, pitch, yaw
         
-        # Reset camera
-        if not hasattr(self, 'camera'):
-            self.camera = CameraController()
-        else:
-            self.camera.reset()
-        
-        # Calculate sphere position based on camera's initial view
-        yaw_rad = np.radians(self.camera.yaw)
-        pitch_rad = np.radians(self.camera.pitch)
-
-        # TODO camera controller class is completely messed up in terms of params of direction etc.
-        
-        # Position sphere 3 units ahead of camera in the direction it's looking
-        # distance_ahead = 3.0
-        # self.sphere_pos = [
-        #     self.camera.camera_position[0] + distance_ahead * np.cos(yaw_rad) * np.cos(pitch_rad),
-        #     self.camera.camera_position[1] + distance_ahead * np.sin(yaw_rad) * np.cos(pitch_rad),
-        #     self.camera.camera_position[2] + distance_ahead * np.sin(pitch_rad)
-        # ]
-
-        # self.sphere_pos = [1, 3.0, 2.0]
-        # self.sphere_pos = [0.3420201539993286, -2.060307264328003, 2.0]
-        # self.sphere_pos = [3.0, 2.5, 2.0]  # finally, this is to the left if camera starts origin
-        # self.sphere_pos = [3.0, -2.5, 2.0]  # finally, this is to the right
-        # self.sphere_pos[1] = np.random.choice([0.2, -0.05])
-        # self.sphere_pos[1] = np.random.choice([-0.2])
-        # Randomize x position between -5 and 5
-        # self.sphere_pos[0] = np.random.uniform(-5.0, 5.0)
-        # self.sphere_pos[0] = -0.05
-        
-        # left vs right
+        # Randomize sphere position (left vs right)
         positions = [(3.0, 2.5, 2.0), (3.0, -2.5, 2.0)]
-        self.sphere_pos = positions[np.random.choice(2)]
+        sphere_pos = positions[np.random.choice(2)]
+        sphere_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target_sphere")
+        self.data.qpos[sphere_body_id] = np.array(sphere_pos)
         
-
-        # Create or reset target sphere
-        radius = 0.2
-        if not hasattr(self, 'sphere_id'):
-            sphere_collision = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
-            sphere_visual = p.createVisualShape(p.GEOM_SPHERE, radius=radius, rgbaColor=[1, 0, 0, 1])
-            self.sphere_id = p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=sphere_collision,
-                baseVisualShapeIndex=sphere_visual,
-                basePosition=self.sphere_pos
-            )
-        else:
-            p.resetBasePositionAndOrientation(self.sphere_id, self.sphere_pos, [0, 0, 0, 1])
-        
-        # Reset episode variables
-        self.current_step = 0
+        mujoco.mj_forward(self.model, self.data)
         rgb, distance = self.get_observation()
         self.previous_distance = distance
-        
-        # Optimize PyBullet settings
-        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-        p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
-        # p.configureDebugVisualizer(p.COV_ENABLE_WIREFRAME, 0)
-        # p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
-        p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
-        p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
-        
-        # p.setTimeStep(1./60.)  # Reduce simulation frequency
-        p.setRealTimeSimulation(0)  # Disable real-time simulation
         
         info = {"distance": distance}
         return rgb, info
@@ -176,25 +125,22 @@ class LookAtObjectEnv(gym.Env):
         """
         self.current_step += 1
         
+        # Get camera body ID
+        camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "rgb_camera")
+        
         # Apply action
         if action == CameraAction.YAW_LEFT:
-            self.camera.yaw += self.yaw_delta
+            self.data.qpos[camera_body_id + 5] += np.radians(self.yaw_delta)
         elif action == CameraAction.YAW_RIGHT:
-            self.camera.yaw -= self.yaw_delta
-        # elif action == CameraAction.PITCH_UP:
-        #     self.camera.pitch = min(89, self.camera.pitch + self.pitch_delta)
-        # elif action == CameraAction.PITCH_DOWN:
-        #     self.camera.pitch = max(-89, self.camera.pitch - self.pitch_delta)
+            self.data.qpos[camera_body_id + 5] -= np.radians(self.yaw_delta)
         elif action == CameraAction.MOVE_FORWARD:
-            self.camera.move_camera(forward=self.translation_delta)    # This should move forward
+            forward = self.get_camera_forward()
+            self.data.qpos[camera_body_id:camera_body_id + 3] += forward * self.translation_delta
         elif action == CameraAction.MOVE_BACKWARD:
-            self.camera.move_camera(forward=-self.translation_delta)   # This should move backward
-        # elif action == CameraAction.STRAFE_LEFT:
-        #     self.camera.move_camera(right=-self.translation_delta)     # This should strafe left
-        # elif action == CameraAction.STRAFE_RIGHT:
-        #     self.camera.move_camera(right=self.translation_delta)      # This should strafe right
+            forward = self.get_camera_forward()
+            self.data.qpos[camera_body_id:camera_body_id + 3] -= forward * self.translation_delta
         
-        self.camera.update_camera()
+        mujoco.mj_forward(self.model, self.data)
         
         # Get new observation
         rgb, distance = self.get_observation()
@@ -248,18 +194,15 @@ class LookAtObjectEnv(gym.Env):
 
     def get_observation(self) -> Tuple[np.ndarray, Optional[float]]:
         """Get current observation from environment"""
-        # Explicitly delete previous RGB and depth images
-        rgb, depth = self.camera.get_camera_image()
+        # Render camera view
+        rgb = mujoco.mj_render(self.model, self.data, 
+                              width=self.image_width,
+                              height=self.image_height,
+                              camera=self.camera_id)
         
-        # Convert to uint8 to reduce memory usage
-        rgb = np.asarray(rgb, dtype=np.uint8)
-        
-        # Process red mask using uint8 operations
+        # Process red mask
         red_mask = (rgb[:,:,0] > 200) & (rgb[:,:,1] < 50) & (rgb[:,:,2] < 50)
         sphere_pixels = np.where(red_mask)
-        
-        # Clear depth buffer as it's not needed
-        del depth
         
         if len(sphere_pixels[0]) == 0:
             return rgb, None
@@ -279,6 +222,13 @@ class LookAtObjectEnv(gym.Env):
         )
         
         return rgb, distance
+    
+
+    def get_camera_forward(self):
+        """Calculate camera forward vector based on orientation"""
+        camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "rgb_camera")
+        yaw = self.data.qpos[camera_body_id + 5]
+        return np.array([np.cos(yaw), np.sin(yaw), 0])
 
 
 def human_control_main():
