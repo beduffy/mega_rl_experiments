@@ -37,18 +37,25 @@ class LookAtObjectEnv(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         
-        # Load MuJoCo model with modified camera setup
+        # Load MuJoCo model with modified camera setup and proper inertial properties
         self.model = mujoco.MjModel.from_xml_string("""
         <mujoco>
+            <default>
+                <joint limited="false"/>
+            </default>
             <worldbody>
                 <light pos="0 0 3" dir="0 0 -1" castshadow="false"/>
                 <geom type="plane" size="10 10 0.1" rgba=".9 .9 .9 1"/>
                 <body name="target_sphere" pos="3 2.5 2">
+                    <joint type="free"/>
                     <geom type="sphere" size="0.2" rgba="1 0 0 1"/>
+                    <inertial pos="0 0 0" mass="1" diaginertia="0.1 0.1 0.1"/>
                 </body>
                 <body name="camera_body" pos="0 0 2">
-                    <camera name="rgb_camera" mode="fixed"/>
                     <joint type="free"/>
+                    <inertial pos="0 0 0" mass="1" diaginertia="0.1 0.1 0.1"/>
+                    <geom type="box" size="0.05 0.05 0.05" rgba="0 0 1 0.2"/>
+                    <camera name="rgb_camera" mode="fixed"/>
                 </body>
             </worldbody>
         </mujoco>
@@ -60,6 +67,11 @@ class LookAtObjectEnv(gym.Env):
         self.image_height = 96
         self.camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "rgb_camera")
         self.camera_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "camera_body")
+        self.sphere_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target_sphere")
+        
+        # Print debug info
+        print(f"Camera body ID: {self.camera_body_id}")
+        print(f"qpos size: {self.data.qpos.shape}")
         
         # Define action and observation spaces with new image size
         self.action_space = spaces.Discrete(len(CameraAction))
@@ -98,15 +110,17 @@ class LookAtObjectEnv(gym.Env):
         # Reset camera position and orientation
         mujoco.mj_resetData(self.model, self.data)
         
-        # Set initial camera pose
-        self.data.qpos[self.camera_body_id*7:(self.camera_body_id*7)+3] = [0, 0, 2]  # x, y, z position
-        self.data.qpos[(self.camera_body_id*7)+3:(self.camera_body_id*7)+7] = [1, 0, 0, 0]  # quaternion orientation
+        # Set initial camera pose (7 values per free joint: 3 for position, 4 for quaternion)
+        camera_qpos_start = 7 * self.sphere_body_id  # First body's joint
+        self.data.qpos[camera_qpos_start:camera_qpos_start+3] = [0, 0, 2]  # Position
+        self.data.qpos[camera_qpos_start+3:camera_qpos_start+7] = [1, 0, 0, 0]  # Quaternion (w,x,y,z)
         
-        # Randomize sphere position (left vs right)
+        # Randomize sphere position
+        sphere_qpos_start = 0  # Second body's joint
         positions = [(3.0, 2.5, 2.0), (3.0, -2.5, 2.0)]
         sphere_pos = positions[np.random.choice(2)]
-        sphere_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target_sphere")
-        self.data.qpos[sphere_body_id*7:(sphere_body_id*7)+3] = sphere_pos
+        self.data.qpos[sphere_qpos_start:sphere_qpos_start+3] = sphere_pos
+        self.data.qpos[sphere_qpos_start+3:sphere_qpos_start+7] = [1, 0, 0, 0]
         
         mujoco.mj_forward(self.model, self.data)
         rgb, distance = self.get_observation()
@@ -131,13 +145,13 @@ class LookAtObjectEnv(gym.Env):
         """
         self.current_step += 1
         
-        # Get current camera pose
-        pos_start = self.camera_body_id * 7
-        quat_start = pos_start + 3
+        # Get current camera pose indices
+        camera_qpos_start = 7 * self.sphere_body_id
+        pos_start = camera_qpos_start
+        quat_start = camera_qpos_start + 3
         
         # Apply action
         if action == CameraAction.YAW_LEFT:
-            # Apply rotation using quaternions
             rot = mujoco.rotations.euler2quat([0, 0, np.radians(self.yaw_delta)])
             current_quat = self.data.qpos[quat_start:quat_start+4]
             new_quat = mujoco.rotations.quat_mul(current_quat, rot)
@@ -240,9 +254,8 @@ class LookAtObjectEnv(gym.Env):
 
     def get_camera_forward(self):
         """Calculate camera forward vector based on orientation"""
-        quat_start = self.camera_body_id * 7 + 3
+        quat_start = 7 * self.sphere_body_id + 3
         quat = self.data.qpos[quat_start:quat_start+4]
-        # Convert quaternion to rotation matrix and get forward vector
         rot_mat = mujoco.rotations.quat2mat(quat)
         return rot_mat[:, 0]  # First column is forward direction
 
