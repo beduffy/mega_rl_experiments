@@ -9,6 +9,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from camera_controller import CameraController
+from memory_debug import memory_tracker, profile
 
 # TODO do I want action primitives or some form of continuous action e.g. directly set yaw to 85 degrees rather than lots of discrete actions
 # TODO claude 3.5 did badly. I think I need a real VLA model.
@@ -76,6 +77,7 @@ class LookAtObjectEnv(gym.Env):
             p.disconnect()
 
 
+    # @profile
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
         """Reset the environment"""
         # Disconnect previous session if exists
@@ -88,6 +90,8 @@ class LookAtObjectEnv(gym.Env):
         
         # Initialize the RNG
         super().reset(seed=seed)
+
+        p.resetSimulation()
         
         # Load ground plane for reference
         p.loadURDF("plane.urdf")
@@ -99,8 +103,8 @@ class LookAtObjectEnv(gym.Env):
             self.camera.reset()
         
         # Calculate sphere position based on camera's initial view
-        yaw_rad = np.radians(self.camera.yaw)
-        pitch_rad = np.radians(self.camera.pitch)
+        # yaw_rad = np.radians(self.camera.yaw)
+        # pitch_rad = np.radians(self.camera.pitch)
 
         # TODO camera controller class is completely messed up in terms of params of direction etc.
         
@@ -129,17 +133,17 @@ class LookAtObjectEnv(gym.Env):
 
         # Create or reset target sphere
         radius = 0.2
-        if not hasattr(self, 'sphere_id'):
-            sphere_collision = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
-            sphere_visual = p.createVisualShape(p.GEOM_SPHERE, radius=radius, rgbaColor=[1, 0, 0, 1])
-            self.sphere_id = p.createMultiBody(
-                baseMass=0,
-                baseCollisionShapeIndex=sphere_collision,
-                baseVisualShapeIndex=sphere_visual,
-                basePosition=self.sphere_pos
-            )
-        else:
-            p.resetBasePositionAndOrientation(self.sphere_id, self.sphere_pos, [0, 0, 0, 1])
+        # if not hasattr(self, 'sphere_id'):
+        sphere_collision = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
+        sphere_visual = p.createVisualShape(p.GEOM_SPHERE, radius=radius, rgbaColor=[1, 0, 0, 1])
+        self.sphere_id = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=sphere_collision,
+            baseVisualShapeIndex=sphere_visual,
+            basePosition=self.sphere_pos
+        )
+        # else:
+        #     p.resetBasePositionAndOrientation(self.sphere_id, self.sphere_pos, [0, 0, 0, 1])
         
         # Reset episode variables
         self.current_step = 0
@@ -158,9 +162,11 @@ class LookAtObjectEnv(gym.Env):
         p.setRealTimeSimulation(0)  # Disable real-time simulation
         
         info = {"distance": distance}
+        # memory_tracker.log_memory("End reset")
         return rgb, info
     
 
+    # @profile
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, dict]:
         """Take a step in the environment
         
@@ -219,6 +225,7 @@ class LookAtObjectEnv(gym.Env):
             "step": self.current_step,
         }
         
+        # memory_tracker.log_memory("End step")
         return rgb, reward, terminated, truncated, info
     
 
@@ -246,57 +253,49 @@ class LookAtObjectEnv(gym.Env):
         return reward
     
 
+    # @profile
     def get_observation(self) -> Tuple[np.ndarray, Optional[float]]:
         """Get current observation from environment"""
         start_time = time.time()
         
-        # Skip frames if needed
-        # if hasattr(self, '_last_rgb') and self.current_step % 2 != 0:
-            # return self._last_rgb, self._last_distance
+        # Get camera image (now without depth)
+        rgb = self.camera.get_camera_image()  # Now returns just the rgb array
         
-        # Get camera image with optimized settings
-        rgb, depth = self.camera.get_camera_image()
+        # Fix red mask calculation - use & for element-wise AND
+        red_mask = (rgb[:,:,0] > 200) & (rgb[:,:,1] < 50) & (rgb[:,:,2] < 50)
+        sphere_pixels = np.nonzero(red_mask)
         
-        # Use pre-allocated arrays and views instead of copies where possible
-        # Optimize red mask calculation
-        red_mask = np.all([
-            rgb[:,:,0] > 200,
-            rgb[:,:,1] < 50,
-            rgb[:,:,2] < 50
-        ], axis=0)
-        
-        sphere_pixels = np.nonzero(red_mask)  # faster than np.where
-        
-        del depth
-        
+        # Calculate distance using pre-computed image center
+        if not hasattr(self, '_image_center'):
+            self._image_center = np.array([rgb.shape[0] / 2, rgb.shape[1] / 2])
+        # print('red_mask.shape:', red_mask.shape)
+        # print('sphere_pixels:', sphere_pixels)
         if len(sphere_pixels[0]) == 0:
             self._last_rgb = rgb
             self._last_distance = None
-            return rgb, None
+            # return rgb, None
+            distance = None
         
-        # Use mean with axis argument instead of separate calls
-        
-        # Use pre-computed image center
-        if not hasattr(self, '_image_center'):
-            self._image_center = np.array([rgb.shape[0] / 2, rgb.shape[1] / 2])
-
-
-        # Vectorized distance calculation
-        sphere_center = np.mean(sphere_pixels, axis=1)
-        distance = np.linalg.norm(sphere_center - self._image_center)
+        else:
+            # Calculate sphere center and distance
+            sphere_center = np.array([
+                np.mean(sphere_pixels[0]),  # y coordinate
+                np.mean(sphere_pixels[1])   # x coordinate
+            ])
+            
+            distance = np.linalg.norm(sphere_center - self._image_center)
         
         # Cache results
-        self._last_rgb = rgb
-        self._last_distance = distance
+        # self._last_rgb = rgb
+        # self._last_distance = distance
         
         # Timing code
-        current_time = time.time()
-        # if not hasattr(self, '_last_timing_print') or current_time - self._last_timing_print >= 1.0:
-        if True:
-            execution_time = current_time - start_time
-            print(f"get_observation() took {execution_time*1000:.2f}ms")
-            self._last_timing_print = current_time
+        # current_time = time.time()
+        # if True:  # or use your preferred condition
+        #     execution_time = current_time - start_time
+        #     print(f"get_observation() took {execution_time*1000:.2f}ms")
         
+        # memory_tracker.log_memory("End get_observation")
         return rgb, distance
 
 
@@ -312,6 +311,8 @@ def human_control_main():
     print("- R: Reset environment")
     print("- P: Print camera parameters")
     print("- Esc: Quit")
+
+    print('pybullet numpy enabled:', p.isNumpyEnabled())  # it is
     
     print_interval = 0.1
     last_print_time = time.time()

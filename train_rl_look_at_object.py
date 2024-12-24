@@ -8,6 +8,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.callbacks import CallbackList
 
@@ -24,17 +25,22 @@ from pstats import SortKey
 # TODO
 # FPS began at 60 and went to 15 fps and then eventually segmentation fault (core dumped). Memory leak or something? lets find and fix. @train_rl_look_at_object.py @camera_controller.py  
 
+from memory_debug import memory_tracker, profile
 
+
+@profile
 def make_env():
     """Create and wrap the environment"""
-    # env = LookAtObjectEnv()
-    # env = LookAtObjectEnv('robot')
-    env = LookAtObjectEnv('human')
-    # Wrap env in Monitor to log training stats
-    env = Monitor(env)
+    memory_tracker.log_memory("Before env creation")
+    env = LookAtObjectEnv(render_mode="human")
+    env = DummyVecEnv([lambda: env])
+    env = VecTransposeImage(env)
+    memory_tracker.log_memory("After env creation")
     return env
 
 
+
+@profile
 def train():
     """Train the PPO agent"""
     # Create environment
@@ -42,8 +48,14 @@ def train():
     
     # Create unique run name with timestamp
     run_name = f"PPO_Camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
+    # 0-255 confirmed
+    # If you are using images as input, the observation must be of type np.uint8 
+    # and be contained in [0, 255]. By default, 
+    # the observation is normalized by SB3 pre-processing (dividing by 255 to have values in [0, 1]) when using CNN policies. Images can be either channel-first or channel-last.
+    # If you want to use CnnPolicy or MultiInputPolicy with image-like observation (3D tensor) that are already normalized, you must pass normalize_images=False to the policy (using policy_kwargs parameter, policy_kwargs=dict(normalize_images=False)) and make sure your image is in the channel-first format.
+
     # Create the PPO agent
+    memory_tracker.log_memory("Before model creation")
     model = PPO(
         "CnnPolicy",
         env,
@@ -67,6 +79,8 @@ def train():
         # ent_coef=0.01,          # Add entropy for exploration
         # vf_coef=0.5,            # Value function coefficient
     )
+    memory_tracker.log_memory("After model creation")
+
     
     # Load the model and set its environment
     # model = PPO.load(
@@ -103,26 +117,48 @@ def train():
             return True
     
     # Combine callbacks
-    # callbacks = CallbackList([
-    #     CheckpointCallback(
-    #         save_freq=10000,
-    #         save_path=f"./ppo_camera_checkpoints/{run_name}/",
-    #         name_prefix="camera_model",
-    #         verbose=1
-    #     ),
-    #     TensorboardCallback()
-    # ])
+    callbacks = CallbackList([
+        CheckpointCallback(
+            save_freq=10000,
+            save_path=f"./ppo_camera_checkpoints/{run_name}/",
+            name_prefix="camera_model",
+            verbose=1
+        ),
+        # TensorboardCallback()
+    ])
     
     # Train the agent
     total_timesteps = 1_000_000
-    total_timesteps = 10_000
+    # total_timesteps = 10_000
     # total_timesteps = 3_000
-    model.learn(
-        total_timesteps=total_timesteps,
-        # callback=callbacks,
-        progress_bar=True,
-        log_interval=1  # Log every step
-    )
+
+    memory_tracker.log_memory("Before training loop")
+
+    # model.learn(
+    #     total_timesteps=total_timesteps,
+    #     callback=callbacks,
+    #     progress_bar=True,
+    #     log_interval=1  # Log every step
+    # )
+
+    num_steps_per_learn = 1000
+    for i in range(0, total_timesteps, num_steps_per_learn):
+        model.learn(
+            total_timesteps=num_steps_per_learn,
+            callback=callbacks,
+            progress_bar=True,
+            reset_num_timesteps=False
+        )
+        memory_tracker.log_memory(f"After {i+num_steps_per_learn} steps")
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+            # Log PyBullet stats
+        if p.isConnected():
+            print(f"PyBullet bodies: {p.getNumBodies()}")
+            print(f"PyBullet constraints: {p.getNumConstraints()}")
     
     # Save the final model
     model.save(f"./ppo_camera_checkpoints/{run_name}/final_model")
