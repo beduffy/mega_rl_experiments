@@ -1,5 +1,6 @@
 import pybullet as p
 import numpy as np
+import time
 
 
 class CameraController:
@@ -32,6 +33,18 @@ class CameraController:
         # Enable mouse picking and keyboard control
         p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
         p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 1)
+        
+        # Cache the last camera parameters
+        self._last_yaw = None
+        self._last_pitch = None
+        self._last_position = None
+        self._cached_view_matrix = None
+        
+        # Pre-allocate arrays for better performance
+        self._target_position = np.zeros(3, dtype=np.float32)
+        
+        self._frame_counter = 0
+        self._last_cleanup_time = time.time()
         
         self.update_camera()
     
@@ -69,6 +82,7 @@ class CameraController:
             cameraPitch=self.pitch,
             cameraTargetPosition=target_position
         )
+        
     
 
     def move_camera(self, forward=0, right=0, up=0):
@@ -91,58 +105,71 @@ class CameraController:
     
 
     def get_camera_image(self):
-        """Get RGB and depth image from current camera position"""
-        # # Calculate look-at point based on camera rotation
-        # yaw_rad = np.radians(self.yaw)
-        # pitch_rad = np.radians(self.pitch)
+        self._frame_counter += 1
+        current_time = time.time()
         
-        # # Calculate direction vector
-        # look_x = np.cos(yaw_rad) * np.cos(pitch_rad)
-        # look_y = np.sin(yaw_rad) * np.cos(pitch_rad)
-        # look_z = np.sin(pitch_rad)
+        # Force cleanup every 1000 frames or 30 seconds
+        # if self._frame_counter >= 200 or (current_time - self._last_cleanup_time) > 30:
+        #     print("Performing PyBullet cleanup...")
+        #     # Store current state
+        #     temp_yaw = self.yaw
+        #     temp_pitch = self.pitch
+        #     temp_pos = self.camera_position.copy()
+            
+        #     # Force PyBullet cleanup
+        #     p.resetSimulation()
+        #     p.resetDebugVisualizerCamera(
+        #         cameraDistance=5,
+        #         cameraYaw=0,
+        #         cameraPitch=-20,
+        #         cameraTargetPosition=[0, 0, 0]
+        #     )
+            
+        #     # Restore state
+        #     self.yaw = temp_yaw
+        #     self.pitch = temp_pitch
+        #     self.camera_position = temp_pos
+        #     self._last_yaw = None  # Force view matrix recomputation
+        #     self._frame_counter = 0
+        #     self._last_cleanup_time = current_time
         
-        # # Calculate target position 1 unit ahead of camera
-        # target_position = [
-        #     self.camera_position[0] + look_x,
-        #     self.camera_position[1] + look_y,
-        #     self.camera_position[2] + look_z
-        # ]
+        # Only recompute view matrix if camera has moved
+        if (self._last_yaw != self.yaw or 
+            self._last_pitch != self.pitch or 
+            not np.array_equal(self._last_position, self.camera_position)):
+            
+            # Update cached values
+            self._last_yaw = self.yaw
+            self._last_pitch = self.pitch
+            self._last_position = np.array(self.camera_position, dtype=np.float32)
+            
+            # Calculate look-at point based on camera rotation
+            yaw_rad = np.radians(self.yaw)
+            pitch_rad = np.radians(self.pitch)
+            
+            # Calculate direction vector and store directly in target_position
+            self._target_position[0] = self.camera_position[0] + np.cos(yaw_rad) * np.cos(pitch_rad)
+            self._target_position[1] = self.camera_position[1] + np.sin(yaw_rad) * np.cos(pitch_rad)
+            self._target_position[2] = self.camera_position[2] + np.sin(pitch_rad)
+            
+            # Compute and cache view matrix
+            self._cached_view_matrix = p.computeViewMatrix(
+                cameraEyePosition=self._last_position,
+                cameraTargetPosition=self._target_position,
+                cameraUpVector=[0, 0, 1]
+            )
         
-        # self.view_matrix = p.computeViewMatrix(
-        #     cameraEyePosition=self.camera_position,
-        #     cameraTargetPosition=target_position,
-        #     cameraUpVector=[0, 0, 1]
-        # )
-        
-        # Get camera image
-        (_, _, px, depth, _) = p.getCameraImage(
+        # Use cached view matrix with minimal flags
+        (_, _, px, _, _) = p.getCameraImage(
             width=self.width,
             height=self.height,
-            viewMatrix=self.view_matrix,
+            viewMatrix=self._cached_view_matrix,
             projectionMatrix=self.proj_matrix,
             renderer=p.ER_TINY_RENDERER,
-            flags=p.ER_NO_SEGMENTATION_MASK,  # Disable segmentation mask
-            shadow=0,  # Disable shadows
-            lightDirection=[0, 0, -1]  # Simple lighting
+            shadow=0
         )
         
-        # rgb_array = np.array(px, dtype=np.uint8)
-        # rgb_array = rgb_array[:, :, :3]
-        # Optimize numpy operations
-        # Avoid copy by using correct shape from the start
-        # rgb_array = np.frombuffer(px, dtype=np.uint8).reshape(self.height, self.width, 4)[:, :, :3]
-        
-        # Use pre-allocated buffer if possible
-        if not hasattr(self, '_rgb_buffer'):
-            self._rgb_buffer = np.empty((self.height, self.width, 3), dtype=np.uint8)
-        
-        # Optimize array creation
-        np.copyto(
-            self._rgb_buffer, 
-            np.frombuffer(px, dtype=np.uint8).reshape(self.height, self.width, 4)[:, :, :3]
-        )
-        
-        return self._rgb_buffer, depth
+        return np.frombuffer(px, dtype=np.uint8).reshape(self.height, self.width, 4)[:, :, :3]
     
 
     def print_current_camera_params(self):
