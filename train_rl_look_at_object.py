@@ -116,7 +116,7 @@ def train():
     # Train the agent
     total_timesteps = 1_000_000
     total_timesteps = 10_000
-    total_timesteps = 5_000
+    total_timesteps = 3_000
     model.learn(
         total_timesteps=total_timesteps,
         # callback=callbacks,
@@ -168,6 +168,11 @@ def profile_training():
 
 
 if __name__ == "__main__":
+    # from stable_baselines3.common.env_checker import check_env
+    # output = check_env(make_env())
+    # print('output:', output)
+
     profile_training()
+
 
     # evaluate("ppo_camera_final")

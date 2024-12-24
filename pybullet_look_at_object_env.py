@@ -248,42 +248,51 @@ class LookAtObjectEnv(gym.Env):
 
     def get_observation(self) -> Tuple[np.ndarray, Optional[float]]:
         """Get current observation from environment"""
-        # Time the function execution
         start_time = time.time()
         
-        # Explicitly delete previous RGB and depth images
+        # Skip frames if needed
+        # if hasattr(self, '_last_rgb') and self.current_step % 2 != 0:
+            # return self._last_rgb, self._last_distance
+        
+        # Get camera image with optimized settings
         rgb, depth = self.camera.get_camera_image()
         
-        # Convert to uint8 to reduce memory usage
-        rgb = np.asarray(rgb, dtype=np.uint8)
+        # Use pre-allocated arrays and views instead of copies where possible
+        # Optimize red mask calculation
+        red_mask = np.all([
+            rgb[:,:,0] > 200,
+            rgb[:,:,1] < 50,
+            rgb[:,:,2] < 50
+        ], axis=0)
         
-        # Process red mask using uint8 operations
-        red_mask = (rgb[:,:,0] > 200) & (rgb[:,:,1] < 50) & (rgb[:,:,2] < 50)
-        sphere_pixels = np.where(red_mask)
+        sphere_pixels = np.nonzero(red_mask)  # faster than np.where
         
-        # Clear depth buffer as it's not needed
         del depth
         
         if len(sphere_pixels[0]) == 0:
+            self._last_rgb = rgb
+            self._last_distance = None
             return rgb, None
         
-        # Calculate sphere center in image
-        sphere_center_y = np.mean(sphere_pixels[0])
-        sphere_center_x = np.mean(sphere_pixels[1])
+        # Use mean with axis argument instead of separate calls
         
-        # Calculate image center
-        image_center_y = rgb.shape[0] / 2
-        image_center_x = rgb.shape[1] / 2
+        # Use pre-computed image center
+        if not hasattr(self, '_image_center'):
+            self._image_center = np.array([rgb.shape[0] / 2, rgb.shape[1] / 2])
+
+
+        # Vectorized distance calculation
+        sphere_center = np.mean(sphere_pixels, axis=1)
+        distance = np.linalg.norm(sphere_center - self._image_center)
         
-        # Calculate Euclidean distance from image center to sphere center
-        distance = np.sqrt(
-            (sphere_center_x - image_center_x)**2 + 
-            (sphere_center_y - image_center_y)**2
-        )
+        # Cache results
+        self._last_rgb = rgb
+        self._last_distance = distance
         
-        # Print execution time once per second
+        # Timing code
         current_time = time.time()
-        if not hasattr(self, '_last_timing_print') or current_time - self._last_timing_print >= 1.0:
+        # if not hasattr(self, '_last_timing_print') or current_time - self._last_timing_print >= 1.0:
+        if True:
             execution_time = current_time - start_time
             print(f"get_observation() took {execution_time*1000:.2f}ms")
             self._last_timing_print = current_time

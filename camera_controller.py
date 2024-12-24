@@ -124,7 +124,6 @@ class CameraController:
         # Optimize numpy operations
         # Avoid copy by using correct shape from the start
         rgb_array = np.frombuffer(px, dtype=np.uint8).reshape(self.height, self.width, 4)[:, :, :3]
-    
         
         return rgb_array, depth
     
