@@ -3,7 +3,7 @@ import numpy as np
 
 
 class CameraController:
-    def __init__(self, distance=2.0, yaw=0.0, pitch=0.0):
+    def __init__(self, distance=2.0, yaw=0.0, pitch=0.0, width=128, height=96):
         # Camera position in world space
         self.camera_position = [0.0, 0.0, 2.0]  # Starting position
         self.yaw = yaw
@@ -12,6 +12,15 @@ class CameraController:
         self.initial_position = self.camera_position.copy()
         self.initial_yaw = yaw
         self.initial_pitch = pitch
+        self.width = width
+        self.height = height
+
+        self.proj_matrix = p.computeProjectionMatrixFOV(
+            fov=60.0,
+            aspect=width / height,
+            nearVal=0.1,
+            farVal=100.0
+        )
         
         # Enable mouse picking and keyboard control
         p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
@@ -74,7 +83,7 @@ class CameraController:
         self.update_camera()
     
 
-    def get_camera_image(self, width=128, height=96):
+    def get_camera_image(self):
         """Get RGB and depth image from current camera position"""
         # Calculate look-at point based on camera rotation
         yaw_rad = np.radians(self.yaw)
@@ -98,24 +107,24 @@ class CameraController:
             cameraUpVector=[0, 0, 1]
         )
         
-        proj_matrix = p.computeProjectionMatrixFOV(
-            fov=60.0,
-            aspect=width / height,
-            nearVal=0.1,
-            farVal=100.0
-        )
-        
         # Get camera image
         (_, _, px, depth, _) = p.getCameraImage(
-            width=width,
-            height=height,
+            width=self.width,
+            height=self.height,
             viewMatrix=view_matrix,
-            projectionMatrix=proj_matrix,
-            renderer=p.ER_TINY_RENDERER
+            projectionMatrix=self.proj_matrix,
+            renderer=p.ER_TINY_RENDERER,
+            # flags=p.ER_NO_SEGMENTATION_MASK,  # Disable segmentation mask
+            # shadow=0,  # Disable shadows
+            # lightDirection=[0, 0, -1]  # Simple lighting
         )
         
-        rgb_array = np.array(px, dtype=np.uint8)
-        rgb_array = rgb_array[:, :, :3]
+        # rgb_array = np.array(px, dtype=np.uint8)
+        # rgb_array = rgb_array[:, :, :3]
+        # Optimize numpy operations
+        # Avoid copy by using correct shape from the start
+        rgb_array = np.frombuffer(px, dtype=np.uint8).reshape(self.height, self.width, 4)[:, :, :3]
+    
         
         return rgb_array, depth
     

@@ -248,6 +248,9 @@ class LookAtObjectEnv(gym.Env):
 
     def get_observation(self) -> Tuple[np.ndarray, Optional[float]]:
         """Get current observation from environment"""
+        # Time the function execution
+        start_time = time.time()
+        
         # Explicitly delete previous RGB and depth images
         rgb, depth = self.camera.get_camera_image()
         
@@ -277,6 +280,13 @@ class LookAtObjectEnv(gym.Env):
             (sphere_center_x - image_center_x)**2 + 
             (sphere_center_y - image_center_y)**2
         )
+        
+        # Print execution time once per second
+        current_time = time.time()
+        if not hasattr(self, '_last_timing_print') or current_time - self._last_timing_print >= 1.0:
+            execution_time = current_time - start_time
+            print(f"get_observation() took {execution_time*1000:.2f}ms")
+            self._last_timing_print = current_time
         
         return rgb, distance
 

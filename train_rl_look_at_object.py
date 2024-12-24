@@ -13,6 +13,10 @@ from stable_baselines3.common.callbacks import CallbackList
 
 from pybullet_look_at_object_env import LookAtObjectEnv
 
+import cProfile
+import pstats
+from pstats import SortKey
+
 
 # TODO surely LLMs could sit beside RL algorithms and give them lots of pointer on what to do and how to change things and then train everything by RL to be 1000000 more sample efficient?
 
@@ -111,6 +115,8 @@ def train():
     
     # Train the agent
     total_timesteps = 1_000_000
+    total_timesteps = 10_000
+    total_timesteps = 5_000
     model.learn(
         total_timesteps=total_timesteps,
         # callback=callbacks,
@@ -146,9 +152,22 @@ def evaluate(model_path: str, num_episodes: int = 10):
     env.close()
 
 
-if __name__ == "__main__":
-    # Train the agent
-    train()
+def profile_training():
+    profiler = cProfile.Profile()
+    profiler.enable()
     
-    # Evaluate the trained model
-    evaluate("ppo_camera_final")
+    try:
+        train()  # Your existing train function
+    finally:
+        profiler.disable()
+        # Output the profiling results
+        stats = pstats.Stats(profiler)
+        stats.sort_stats(SortKey.CUMULATIVE)
+        stats.dump_stats("training_profile.prof")  # For visualization
+        stats.print_stats(50)  # Print top 50 functions by time
+
+
+if __name__ == "__main__":
+    profile_training()
+
+    # evaluate("ppo_camera_final")
