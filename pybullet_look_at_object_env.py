@@ -89,7 +89,7 @@ class LookAtObjectEnv(gym.Env):
         # p.setAdditionalSearchPath(pybullet_data.getDataPath())
         
         # Initialize the RNG
-        super().reset(seed=seed)
+        # super().reset(seed=seed)
 
         p.resetSimulation()
         
@@ -259,19 +259,19 @@ class LookAtObjectEnv(gym.Env):
         start_time = time.time()
         
         # Get camera image (now without depth)
-        rgb = self.camera.get_camera_image()  # Now returns just the rgb array
+        self.rgb = self.camera.get_camera_image()  # Now returns just the rgb array
         
         # Fix red mask calculation - use & for element-wise AND
-        red_mask = (rgb[:,:,0] > 200) & (rgb[:,:,1] < 50) & (rgb[:,:,2] < 50)
+        red_mask = (self.rgb[:,:,0] > 200) & (self.rgb[:,:,1] < 50) & (self.rgb[:,:,2] < 50)
         sphere_pixels = np.nonzero(red_mask)
         
         # Calculate distance using pre-computed image center
         if not hasattr(self, '_image_center'):
-            self._image_center = np.array([rgb.shape[0] / 2, rgb.shape[1] / 2])
+            self._image_center = np.array([self.rgb.shape[0] / 2, self.rgb.shape[1] / 2])
         # print('red_mask.shape:', red_mask.shape)
         # print('sphere_pixels:', sphere_pixels)
         if len(sphere_pixels[0]) == 0:
-            self._last_rgb = rgb
+            self._last_rgb = self.rgb
             self._last_distance = None
             # return rgb, None
             distance = None
@@ -296,7 +296,7 @@ class LookAtObjectEnv(gym.Env):
         #     print(f"get_observation() took {execution_time*1000:.2f}ms")
         
         # memory_tracker.log_memory("End get_observation")
-        return rgb, distance
+        return self.rgb, distance
 
 
 def human_control_main():

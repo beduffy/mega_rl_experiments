@@ -1,6 +1,10 @@
 import time
 from typing import Tuple, Optional
 from datetime import datetime
+import gc
+import cProfile
+import pstats
+from pstats import SortKey
 
 import pybullet as p
 import numpy as np
@@ -13,22 +17,17 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.callbacks import CallbackList
 
 from pybullet_look_at_object_env import LookAtObjectEnv
-
-import cProfile
-import pstats
-from pstats import SortKey
-
-
-# TODO surely LLMs could sit beside RL algorithms and give them lots of pointer on what to do and how to change things and then train everything by RL to be 1000000 more sample efficient?
-
-
-# TODO
-# FPS began at 60 and went to 15 fps and then eventually segmentation fault (core dumped). Memory leak or something? lets find and fix. @train_rl_look_at_object.py @camera_controller.py  
-
 from memory_debug import memory_tracker, profile
 
 
-@profile
+
+# TODO surely LLMs could sit beside RL algorithms and give them lots of pointer on what to do and how to change things and then train everything by RL to be 1000000 more sample efficient?
+# TODO
+# FPS began at 60 and went to 15 fps and then eventually segmentation fault (core dumped). Memory leak or something? lets find and fix. @train_rl_look_at_object.py @camera_controller.py  
+
+
+
+# @profile
 def make_env():
     """Create and wrap the environment"""
     memory_tracker.log_memory("Before env creation")
@@ -141,7 +140,7 @@ def train():
     #     log_interval=1  # Log every step
     # )
 
-    num_steps_per_learn = 1000
+    num_steps_per_learn = 10000
     for i in range(0, total_timesteps, num_steps_per_learn):
         model.learn(
             total_timesteps=num_steps_per_learn,
@@ -152,10 +151,11 @@ def train():
         memory_tracker.log_memory(f"After {i+num_steps_per_learn} steps")
         
         # Force garbage collection
-        import gc
         gc.collect()
+        time.sleep(3)
+        memory_tracker.log_memory(f"After gc.collect() steps")
         
-            # Log PyBullet stats
+        # Log PyBullet stats
         if p.isConnected():
             print(f"PyBullet bodies: {p.getNumBodies()}")
             print(f"PyBullet constraints: {p.getNumConstraints()}")

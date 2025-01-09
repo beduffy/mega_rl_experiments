@@ -46,14 +46,33 @@ class CameraController:
         self._frame_counter = 0
         self._last_cleanup_time = time.time()
         
+        self._view_matrix = None
+        self._last_params = None
+        self._rgb_buffer = None
+        
         self.update_camera()
     
 
     def reset(self):
-        """Reset camera to initial position and orientation"""
-        self.camera_position = self.initial_position.copy()
-        self.yaw = self.initial_yaw
-        self.pitch = self.initial_pitch
+        """Reset camera and clear buffers"""
+        # Reset camera parameters
+        self.yaw = 0
+        self.pitch = 0
+        self.camera_position = [0, 0, 2]
+        
+        # Clear cached data
+        self._view_matrix = None
+        self._last_params = None
+        # Don't clear _rgb_buffer - we can reuse it
+        
+        # Force PyBullet to clear its state
+        # if p.isConnected():
+        # p.resetDebugVisualizerCamera(
+        #     cameraDistance=0.1,
+        #     cameraYaw=self.yaw - 90,
+        #     cameraPitch=self.pitch,
+        #     cameraTargetPosition=target_position
+        # )
         self.update_camera()
     
 
@@ -105,71 +124,54 @@ class CameraController:
     
 
     def get_camera_image(self):
-        self._frame_counter += 1
-        current_time = time.time()
+        """Get RGB image with memory leak prevention"""
+        # Cache camera parameters tuple for comparison
+        current_params = (self.yaw, self.pitch, tuple(self.camera_position))
         
-        # Force cleanup every 1000 frames or 30 seconds
-        # if self._frame_counter >= 200 or (current_time - self._last_cleanup_time) > 30:
-        #     print("Performing PyBullet cleanup...")
-        #     # Store current state
-        #     temp_yaw = self.yaw
-        #     temp_pitch = self.pitch
-        #     temp_pos = self.camera_position.copy()
-            
-        #     # Force PyBullet cleanup
-        #     p.resetSimulation()
-        #     p.resetDebugVisualizerCamera(
-        #         cameraDistance=5,
-        #         cameraYaw=0,
-        #         cameraPitch=-20,
-        #         cameraTargetPosition=[0, 0, 0]
-        #     )
-            
-        #     # Restore state
-        #     self.yaw = temp_yaw
-        #     self.pitch = temp_pitch
-        #     self.camera_position = temp_pos
-        #     self._last_yaw = None  # Force view matrix recomputation
-        #     self._frame_counter = 0
-        #     self._last_cleanup_time = current_time
-        
-        # Only recompute view matrix if camera has moved
-        if (self._last_yaw != self.yaw or 
-            self._last_pitch != self.pitch or 
-            not np.array_equal(self._last_position, self.camera_position)):
-            
-            # Update cached values
-            self._last_yaw = self.yaw
-            self._last_pitch = self.pitch
-            self._last_position = np.array(self.camera_position, dtype=np.float32)
-            
-            # Calculate look-at point based on camera rotation
+        # Only recompute view matrix if parameters changed
+        if self._last_params != current_params:
             yaw_rad = np.radians(self.yaw)
             pitch_rad = np.radians(self.pitch)
             
-            # Calculate direction vector and store directly in target_position
+            # Reuse arrays instead of creating new ones
+            if not hasattr(self, '_target_position'):
+                self._target_position = np.zeros(3, dtype=np.float32)
+            
+            # Update target position in-place
             self._target_position[0] = self.camera_position[0] + np.cos(yaw_rad) * np.cos(pitch_rad)
             self._target_position[1] = self.camera_position[1] + np.sin(yaw_rad) * np.cos(pitch_rad)
             self._target_position[2] = self.camera_position[2] + np.sin(pitch_rad)
             
-            # Compute and cache view matrix
-            self._cached_view_matrix = p.computeViewMatrix(
-                cameraEyePosition=self._last_position,
+            # Compute view matrix
+            self._view_matrix = p.computeViewMatrix(
+                cameraEyePosition=self.camera_position,
                 cameraTargetPosition=self._target_position,
                 cameraUpVector=[0, 0, 1]
             )
+            
+            self._last_params = current_params
         
-        # Use cached view matrix with minimal flags
+        # Pre-allocate RGB buffer if needed
+        if self._rgb_buffer is None:
+            self._rgb_buffer = np.empty((self.height, self.width, 3), dtype=np.uint8)
+        
+        # Get camera image with minimal options
         (_, _, px, _, _) = p.getCameraImage(
             width=self.width,
             height=self.height,
-            viewMatrix=self._cached_view_matrix,
+            viewMatrix=self._view_matrix,
             projectionMatrix=self.proj_matrix,
             renderer=p.ER_TINY_RENDERER,
+            flags=p.ER_NO_SEGMENTATION_MASK,
             shadow=0
         )
         
-        return np.frombuffer(px, dtype=np.uint8).reshape(self.height, self.width, 4)[:, :, :3]
+        # Update buffer in-place
+        np.copyto(self._rgb_buffer, 
+                 np.frombuffer(px, dtype=np.uint8)
+                 .reshape(self.height, self.width, 4)[:, :, :3])
+        
+        return self._rgb_buffer
     
 
     def print_current_camera_params(self):
@@ -180,3 +182,9 @@ class CameraController:
         print(f"Yaw: {params[8]:.2f}")
         print(f"Pitch: {params[9]:.2f}")
         print(f"Target Position: {params[11]}")
+    
+    def __del__(self):
+        """Cleanup when object is deleted"""
+        self._rgb_buffer = None
+        self._view_matrix = None
+        self._last_params = None
