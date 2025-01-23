@@ -42,13 +42,20 @@ class ServoEnv:
                  kp: float = 3.0,
                  kd: float = 0.5,
                  target_threshold: float = 0.01,
-                 max_steps: int = 200):
+                 max_steps: int = 200,
+                 render_mode: str = None):
         
-        # Initialize pygame
+        # Initialize pygame in headless mode if not rendering
+        os.environ['SDL_VIDEODRIVER'] = 'dummy' if render_mode is None else 'x11'
         pygame.init()
         self.screen_size = screen_size
-        self.screen = pygame.display.set_mode((screen_size, screen_size))
-        pygame.display.set_caption("Servo Flag Environment")
+        self.render_mode = render_mode
+        
+        if render_mode is not None:
+            self.screen = pygame.display.set_mode((screen_size, screen_size))
+            pygame.display.set_caption("Servo Flag Environment")
+        else:
+            self.screen = pygame.Surface((screen_size, screen_size))
         
         # Environment parameters
         self.servo_radius = servo_radius
@@ -215,7 +222,8 @@ class ServoEnv:
         )
         pygame.draw.line(self.screen, self.BLUE, self.servo_center, flag_end, 4)
         
-        pygame.display.flip()
+        if self.render_mode is not None:
+            pygame.display.flip()
 
 
     def start_recording(self) -> None:
