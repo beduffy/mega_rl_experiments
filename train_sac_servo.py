@@ -10,6 +10,8 @@ import random
 from torch.utils.tensorboard import SummaryWriter
 import os
 from datetime import datetime
+import argparse
+import time
 
 from simulated_pixel_servo_point_flag_at_target import ServoEnv
 
@@ -358,78 +360,153 @@ class SAC:
         
         self.train_steps += 1
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train SAC on Servo Environment')
+    
+    # Environment parameters
+    parser.add_argument('--render-mode', type=str, default=None, choices=[None, 'human'],
+                       help='Render mode for environment. None for headless, human for rendering')
+    parser.add_argument('--eval-render-mode', type=str, default='human', choices=[None, 'human'],
+                       help='Render mode for evaluation episodes')
+    
+    # Training parameters
+    parser.add_argument('--episodes', type=int, default=1000,
+                       help='Number of episodes to train')
+    parser.add_argument('--eval-interval', type=int, default=10,
+                       help='Evaluate every N episodes')
+    parser.add_argument('--eval-episodes', type=int, default=5,
+                       help='Number of evaluation episodes')
+    parser.add_argument('--max-steps', type=int, default=200,
+                       help='Maximum steps per episode')
+    
+    # SAC hyperparameters
+    parser.add_argument('--batch-size', type=int, default=32,
+                       help='Batch size for training')
+    parser.add_argument('--lr', type=float, default=1e-4,
+                       help='Learning rate')
+    parser.add_argument('--alpha', type=float, default=0.2,
+                       help='Temperature parameter')
+    parser.add_argument('--tau', type=float, default=0.005,
+                       help='Target network update rate')
+    parser.add_argument('--gamma', type=float, default=0.99,
+                       help='Discount factor')
+    parser.add_argument('--buffer-size', type=int, default=100000,
+                       help='Replay buffer size')
+    
+    # Device and logging
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+                       help='Device to use (cuda/cpu)')
+    parser.add_argument('--log-dir', type=str, default='runs',
+                       help='Directory for tensorboard logs')
+    
+    return parser.parse_args()
+
 def main():
+    args = parse_args()
+    
     # Create directories
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_dir = os.path.join('runs', f'sac_servo_{timestamp}')
+    log_dir = os.path.join(args.log_dir, f'sac_servo_{timestamp}')
     os.makedirs(log_dir, exist_ok=True)
     
+    # Save arguments
+    with open(os.path.join(log_dir, 'args.txt'), 'w') as f:
+        for arg, value in vars(args).items():
+            f.write(f'{arg}: {value}\n')
+    
     # Initialize environment and agent
-    env = ServoEnv(render_mode=None)  # Headless mode
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    env = ServoEnv(render_mode=args.render_mode)
+    device = torch.device(args.device)
     
     agent = SAC(
         env=env,
         device=device,
         log_dir=log_dir,
-        lr=1e-4,  # Slightly higher learning rate
-        gamma=0.99,
-        tau=0.005,
-        alpha=0.2,  # Standard temperature
-        buffer_size=100000,
-        batch_size=32  # Smaller batch size for stability
+        lr=args.lr,
+        gamma=args.gamma,
+        tau=args.tau,
+        alpha=args.alpha,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size
     )
     
-    # Training loop
-    episodes = 1000
-    eval_interval = 10
-    max_steps = 200
+    # Add FPS and progress tracking
+    start_time = time.time()
+    total_steps = 0
+    last_print_time = start_time
+    last_print_steps = 0
     
-    for episode in range(episodes):
+    print(f"\nStarting training with device: {args.device}")
+    print(f"Render mode: {args.render_mode}")
+    
+    # Training loop
+    for episode in range(args.episodes):
         state = env.reset()
         episode_reward = 0
+        episode_steps = 0
         
-        for step in range(max_steps):
+        for step in range(args.max_steps):
+            # Track steps
+            total_steps += 1
+            episode_steps += 1
+            
+            # Training step
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action.cpu().numpy()[0])
             
-            # Store transition
             agent.replay_buffer.push(state, action.cpu().numpy(), reward, next_state, done)
-            
-            # Train agent
             agent.train_step()
             
             episode_reward += reward
             state = next_state
+            
+            # Print progress every 20 seconds
+            current_time = time.time()
+            if current_time - last_print_time >= 20:
+                steps_since_last_print = total_steps - last_print_steps
+                time_elapsed = current_time - last_print_time
+                fps = steps_since_last_print / time_elapsed
+                
+                print(f"\nProgress Update:")
+                print(f"Episode: {episode}/{args.episodes}")
+                print(f"Total Steps: {total_steps}")
+                print(f"FPS: {fps:.1f}")
+                print(f"Buffer Size: {len(agent.replay_buffer)}/{args.buffer_size}")
+                print(f"Current Episode Steps: {episode_steps}")
+                print(f"Current Episode Reward: {episode_reward:.2f}")
+                
+                last_print_time = current_time
+                last_print_steps = total_steps
             
             if done:
                 break
         
         # Log episode metrics
         agent.writer.add_scalar('Reward/train', episode_reward, episode)
+        agent.writer.add_scalar('Steps/train', episode_steps, episode)
         
         # Evaluate
-        if episode % eval_interval == 0:
+        if episode % args.eval_interval == 0:
             eval_rewards = []
-            eval_env = ServoEnv(render_mode='human')  # Render during eval
+            eval_env = ServoEnv(render_mode=args.eval_render_mode)
             
-            for _ in range(5):
-                state = eval_env.reset()
+            for _ in range(args.eval_episodes):
+                eval_state = eval_env.reset()
                 eval_reward = 0
                 
                 while True:
-                    action = agent.select_action(state, evaluate=True)
-                    next_state, reward, done, _ = eval_env.step(action.cpu().numpy()[0])
-                    eval_reward += reward
-                    state = next_state
-                    if done:
+                    eval_action = agent.select_action(eval_state, evaluate=True)
+                    eval_next_state, eval_r, eval_done, _ = eval_env.step(eval_action.cpu().numpy()[0])
+                    eval_reward += eval_r
+                    eval_state = eval_next_state
+                    if eval_done:
                         break
                 
                 eval_rewards.append(eval_reward)
             
             mean_reward = np.mean(eval_rewards)
             agent.writer.add_scalar('Reward/eval', mean_reward, episode)
-            print(f"Episode {episode}: Eval reward = {mean_reward:.2f}")
+            print(f"\nEpisode {episode}: Eval reward = {mean_reward:.2f}")
 
 if __name__ == '__main__':
     main() 
