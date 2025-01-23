@@ -34,6 +34,7 @@ def make_env():
     env = LookAtObjectEnv(render_mode="human")
     env = DummyVecEnv([lambda: env])
     env = VecTransposeImage(env)
+    # TODO if DIRECT we still had memory and FPS leak? find out
     memory_tracker.log_memory("After env creation")
     return env
 
