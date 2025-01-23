@@ -15,6 +15,9 @@ from torch.utils.tensorboard import SummaryWriter
 Experience = namedtuple('Experience', ['state', 'action', 'reward', 'next_state', 'done'])
 
 
+# TODO check how much easier is it to learn local policy of left vs right, or velocity compared to absolute angle, surely absolute angle is the hardest
+
+
 class DQN(nn.Module):
     """DQN that takes in images and qpos and outputs Q-values for discretized actions"""
     def __init__(self, image_size=240, qpos_dim=2, num_actions=16):
@@ -151,7 +154,7 @@ def main():
     parser.add_argument('--target_update', type=int, default=10)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--eval_interval', type=int, default=100)
-    parser.add_argument('--eval_episodes', type=int, default=10)
+    parser.add_argument('--eval_episodes', type=int, default=2)
     parser.add_argument('--save_dir', type=str, default='rl_servo_training')
     args = parser.parse_args()
 
