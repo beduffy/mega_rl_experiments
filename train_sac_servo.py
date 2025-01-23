@@ -71,62 +71,105 @@ class SACPolicy(nn.Module):
         size2 = conv2d_size_out(size1)
         self.flat_size = 32 * size2 * size2
         
-        # Shared image encoder
+        # More stable CNN with proper normalization
         self.conv = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=2),
+            # First conv block with smaller initial features
+            nn.Conv2d(3, 8, kernel_size=3, stride=2),
+            nn.BatchNorm2d(8),
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2),
+            nn.MaxPool2d(2),  # Add pooling to reduce feature magnitude
+            
+            # Second conv block
+            nn.Conv2d(8, 16, kernel_size=3, stride=2),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
+            nn.MaxPool2d(2),
+            
+            # Final conv block
+            nn.Conv2d(16, 32, kernel_size=3, stride=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((4, 4)),  # Force output size
             nn.Flatten()
         )
         
-        # Actor network
+        # Recalculate flat size after adaptive pooling
+        self.flat_size = 32 * 4 * 4
+        
+        # Actor network with proper normalization
         self.actor_net = nn.Sequential(
             nn.Linear(self.flat_size + qpos_dim, 256),
+            nn.LayerNorm(256),
             nn.ReLU(),
+            nn.Dropout(0.1),  # Add dropout for regularization
+            
             nn.Linear(256, 128),
-            nn.ReLU()
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Dropout(0.1)
         )
         
-        # Initialize with smaller values to prevent initial saturation
+        # Output layers with careful initialization
         self.mean = nn.Linear(128, action_dim)
-        self.mean.weight.data.uniform_(-3e-3, 3e-3)
-        self.mean.bias.data.uniform_(-3e-3, 3e-3)
+        torch.nn.init.uniform_(self.mean.weight, -1e-3, 1e-3)
+        torch.nn.init.uniform_(self.mean.bias, -1e-3, 1e-3)
         
         self.log_std = nn.Linear(128, action_dim)
-        self.log_std.weight.data.uniform_(-3e-3, 3e-3)
-        self.log_std.bias.data.uniform_(-3e-3, 3e-3)
+        torch.nn.init.uniform_(self.log_std.weight, -1e-3, 1e-3)
+        torch.nn.init.uniform_(self.log_std.bias, -1e-3, 1e-3)
     
     def forward(self, image, qpos):
+        # Ensure inputs are in correct range
+        image = image.clamp(0, 1)  # Normalize image to [0,1]
+        qpos = qpos.clamp(-10, 10)  # Reasonable range for angles
+        
         features = self.conv(image)
+        if torch.isnan(features).any():
+            print("NaN detected in features!")
+            return None, None
+        
+        if len(qpos.shape) > 2:
+            qpos = qpos.reshape(qpos.shape[0], -1)
+        
         x = torch.cat([features, qpos], dim=1)
         x = self.actor_net(x)
         
-        mean = self.mean(x)
+        # Bound outputs for stability
+        mean = torch.tanh(self.mean(x))
         log_std = self.log_std(x)
-        log_std = torch.clamp(log_std, -20, 2)  # Prevent numerical instability
+        log_std = torch.clamp(log_std, -5, 2)  # Less aggressive clamping
         
         return mean, log_std
     
     def sample(self, image, qpos):
         mean, log_std = self(image, qpos)
-        std = log_std.exp()
         
-        # Add small epsilon to prevent numerical instability
-        std = std + 1e-6
+        if mean is None or log_std is None:  # Check for NaN detection
+            raise ValueError("NaN detected in network output")
         
-        normal = Normal(mean, std)
-        x_t = normal.rsample()  # Reparameterization trick
+        # More stable std computation
+        std = torch.exp(log_std).clamp(1e-4, 2.0)
         
-        # Constrain action to [-π, π] using tanh
-        action = torch.tanh(x_t) * np.pi
-        
-        # Calculate log probability, adding correction for tanh squashing
-        log_prob = normal.log_prob(x_t)
-        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
-        log_prob = log_prob.sum(1, keepdim=True)
-        
-        return action, log_prob
+        # Create distribution and sample
+        try:
+            normal = Normal(mean, std)
+            x_t = normal.rsample()
+            
+            # Bound actions to [-π, π]
+            action = torch.tanh(x_t) * np.pi
+            
+            # Compute log prob with better numerical stability
+            log_prob = normal.log_prob(x_t)
+            log_prob -= torch.log(1 - action.pow(2).clamp(max=0.9999) + 1e-6)
+            log_prob = log_prob.sum(1, keepdim=True)
+            
+            return action, log_prob
+            
+        except Exception as e:
+            print(f"\nError in sampling:")
+            print(f"mean shape: {mean.shape}, values: {mean}")
+            print(f"std shape: {std.shape}, values: {std}")
+            raise e
 
 class Critic(nn.Module):
     def __init__(self, image_size=240, qpos_dim=2, action_dim=1):
@@ -223,9 +266,16 @@ class SAC:
     
     def select_action(self, state, evaluate=False):
         image, qpos = state
+        # print("\nDEBUG select_action:")
+        # print(f"Original image shape: {image.shape}")
+        # print(f"Original qpos shape: {qpos.shape}")
+        
         # Add batch dimension and normalize
         image = torch.FloatTensor(image).permute(2, 0, 1).unsqueeze(0).to(self.device) / 255.0
-        qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)  # Ensure 2D: [1, 2]
+        qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)
+        
+        # print(f"Processed image shape: {image.shape}")
+        # print(f"Processed qpos shape: {qpos.shape}")
         
         if evaluate:
             with torch.no_grad():
@@ -322,12 +372,12 @@ def main():
         env=env,
         device=device,
         log_dir=log_dir,
-        lr=1e-4,  # Slightly lower learning rate
+        lr=1e-4,  # Slightly higher learning rate
         gamma=0.99,
         tau=0.005,
-        alpha=0.1,  # Lower initial temperature
+        alpha=0.2,  # Standard temperature
         buffer_size=100000,
-        batch_size=256
+        batch_size=32  # Smaller batch size for stability
     )
     
     # Training loop
