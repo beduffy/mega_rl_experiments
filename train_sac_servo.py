@@ -26,7 +26,7 @@ class ReplayBuffer:
         self.buffer.append((
             (np.array(image, dtype=np.float32),  # image shape: (H, W, C)
              np.array(qpos, dtype=np.float32).flatten()),  # qpos shape: (2,)
-            np.array(action, dtype=np.float32).flatten(),  # action shape: (1,)
+            np.array(action, dtype=np.float32).reshape(-1),  # action shape: (1,)
             np.array(reward, dtype=np.float32),  # reward shape: scalar
             (np.array(next_image, dtype=np.float32),  # next_image shape: (H, W, C)
              np.array(next_qpos, dtype=np.float32).flatten()),  # next_qpos shape: (2,)
@@ -52,7 +52,7 @@ class ReplayBuffer:
         next_images = next_images.permute(0, 3, 1, 2)  # Convert to (B, C, H, W)
         next_qpos = torch.FloatTensor(np.stack(next_qpos))  # (B, 2)
         
-        actions = torch.FloatTensor(np.stack(actions))  # (B, 1)
+        actions = torch.FloatTensor(np.stack(actions)).unsqueeze(-1)  # (B, 1)
         rewards = torch.FloatTensor(np.stack(rewards))  # (B,)
         dones = torch.FloatTensor(np.stack(dones))  # (B,)
         
@@ -67,8 +67,8 @@ class SACPolicy(nn.Module):
         def conv2d_size_out(size, kernel_size=3, stride=2):
             return ((size - kernel_size) // stride) + 1
         
-        size1 = conv2d_size_out(image_size)  # 119
-        size2 = conv2d_size_out(size1)       # 59
+        size1 = conv2d_size_out(image_size)
+        size2 = conv2d_size_out(size1)
         self.flat_size = 32 * size2 * size2
         
         # Shared image encoder
@@ -88,17 +88,14 @@ class SACPolicy(nn.Module):
             nn.ReLU()
         )
         
+        # Initialize with smaller values to prevent initial saturation
         self.mean = nn.Linear(128, action_dim)
-        self.log_std = nn.Linear(128, action_dim)
+        self.mean.weight.data.uniform_(-3e-3, 3e-3)
+        self.mean.bias.data.uniform_(-3e-3, 3e-3)
         
-        # Initialize weights
-        self.apply(self._init_weights)
-    
-    @staticmethod
-    def _init_weights(m):
-        if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight)
-            torch.nn.init.constant_(m.bias, 0.0)
+        self.log_std = nn.Linear(128, action_dim)
+        self.log_std.weight.data.uniform_(-3e-3, 3e-3)
+        self.log_std.bias.data.uniform_(-3e-3, 3e-3)
     
     def forward(self, image, qpos):
         features = self.conv(image)
@@ -107,21 +104,27 @@ class SACPolicy(nn.Module):
         
         mean = self.mean(x)
         log_std = self.log_std(x)
-        log_std = torch.clamp(log_std, -20, 2)
+        log_std = torch.clamp(log_std, -20, 2)  # Prevent numerical instability
         
         return mean, log_std
     
     def sample(self, image, qpos):
         mean, log_std = self(image, qpos)
         std = log_std.exp()
+        
+        # Add small epsilon to prevent numerical instability
+        std = std + 1e-6
+        
         normal = Normal(mean, std)
         x_t = normal.rsample()  # Reparameterization trick
         
-        # Constrain action to [-π, π]
+        # Constrain action to [-π, π] using tanh
         action = torch.tanh(x_t) * np.pi
         
-        # Compute log probability, adding correction for tanh squashing
-        log_prob = normal.log_prob(x_t) - torch.log(1 - action.pow(2) + 1e-6)
+        # Calculate log probability, adding correction for tanh squashing
+        log_prob = normal.log_prob(x_t)
+        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
+        log_prob = log_prob.sum(1, keepdim=True)
         
         return action, log_prob
 
@@ -152,18 +155,25 @@ class Critic(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 1)
         )
-        
-        # Initialize weights
-        self.apply(self._init_weights)
-    
-    @staticmethod
-    def _init_weights(m):
-        if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight)
-            torch.nn.init.constant_(m.bias, 0.0)
     
     def forward(self, image, qpos, action):
-        features = self.conv(image)
+        # Print shapes for debugging
+        # print(f"Image shape: {image.shape}")
+        # print(f"Qpos shape: {qpos.shape}")
+        # print(f"Action shape: {action.shape}")
+        
+        features = self.conv(image)  # [B, flat_size]
+        
+        # Ensure all inputs are 2D: [batch_size, features]
+        if len(qpos.shape) > 2:
+            qpos = qpos.reshape(qpos.shape[0], -1)
+        if len(action.shape) > 2:
+            action = action.reshape(action.shape[0], -1)
+        
+        # print(f"Features shape: {features.shape}")
+        # print(f"Reshaped qpos shape: {qpos.shape}")
+        # print(f"Reshaped action shape: {action.shape}")
+        
         x = torch.cat([features, qpos, action], dim=1)
         return self.q_net(x)
 
@@ -235,14 +245,14 @@ class SAC:
         (image, qpos) = state
         (next_image, next_qpos) = next_state
         
-        # Move to device
+        # Move to device and ensure shapes
         image = image.to(self.device)  # [B, C, H, W]
         qpos = qpos.to(self.device)    # [B, 2]
         action = action.to(self.device) # [B, 1]
-        reward = reward.to(self.device) # [B]
-        next_image = next_image.to(self.device)  # [B, C, H, W]
-        next_qpos = next_qpos.to(self.device)    # [B, 2]
-        done = done.to(self.device)    # [B]
+        reward = reward.unsqueeze(-1).to(self.device)  # [B, 1]
+        next_image = next_image.to(self.device)
+        next_qpos = next_qpos.to(self.device)
+        done = done.unsqueeze(-1).to(self.device)  # [B, 1]
         
         # Update critics
         with torch.no_grad():
@@ -254,19 +264,21 @@ class SAC:
         
         # Critic 1 loss
         q1 = self.critic1(image, qpos, action)
-        q1_loss = nn.MSELoss()(q1, q_target)
+        q1_loss = nn.MSELoss()(q1, q_target.detach())
         
         # Critic 2 loss
         q2 = self.critic2(image, qpos, action)
-        q2_loss = nn.MSELoss()(q2, q_target)
+        q2_loss = nn.MSELoss()(q2, q_target.detach())
         
         # Update critics
         self.critic1_optim.zero_grad()
         q1_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic1.parameters(), 1.0)  # Add gradient clipping
         self.critic1_optim.step()
         
         self.critic2_optim.zero_grad()
         q2_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), 1.0)  # Add gradient clipping
         self.critic2_optim.step()
         
         # Update policy
@@ -279,6 +291,7 @@ class SAC:
         
         self.policy_optim.zero_grad()
         policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)  # Add gradient clipping
         self.policy_optim.step()
         
         # Update target networks
@@ -305,7 +318,17 @@ def main():
     env = ServoEnv(render_mode=None)  # Headless mode
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    agent = SAC(env, device, log_dir)
+    agent = SAC(
+        env=env,
+        device=device,
+        log_dir=log_dir,
+        lr=1e-4,  # Slightly lower learning rate
+        gamma=0.99,
+        tau=0.005,
+        alpha=0.1,  # Lower initial temperature
+        buffer_size=100000,
+        batch_size=256
+    )
     
     # Training loop
     episodes = 1000
