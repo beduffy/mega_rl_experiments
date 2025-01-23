@@ -18,24 +18,43 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=capacity)
     
     def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
+        # Ensure consistent shapes when storing
+        image, qpos = state
+        next_image, next_qpos = next_state
+        
+        # Convert everything to numpy arrays with consistent shapes
+        self.buffer.append((
+            (np.array(image, dtype=np.float32),  # image shape: (H, W, C)
+             np.array(qpos, dtype=np.float32).flatten()),  # qpos shape: (2,)
+            np.array(action, dtype=np.float32).flatten(),  # action shape: (1,)
+            np.array(reward, dtype=np.float32),  # reward shape: scalar
+            (np.array(next_image, dtype=np.float32),  # next_image shape: (H, W, C)
+             np.array(next_qpos, dtype=np.float32).flatten()),  # next_qpos shape: (2,)
+            np.array(done, dtype=np.float32)  # done shape: scalar
+        ))
     
     def sample(self, batch_size):
         samples = random.sample(self.buffer, batch_size)
+        
+        # Unpack and stack samples
         states, actions, rewards, next_states, dones = zip(*samples)
         
         # Unpack states and next_states
         images, qpos = zip(*states)
         next_images, next_qpos = zip(*next_states)
         
-        # Convert to tensors
-        images = torch.FloatTensor(np.stack(images)).permute(0, 3, 1, 2) / 255.0
-        qpos = torch.FloatTensor(np.stack(qpos))
-        actions = torch.FloatTensor(np.stack(actions))
-        rewards = torch.FloatTensor(np.stack(rewards))
-        next_images = torch.FloatTensor(np.stack(next_images)).permute(0, 3, 1, 2) / 255.0
-        next_qpos = torch.FloatTensor(np.stack(next_qpos))
-        dones = torch.FloatTensor(np.stack(dones))
+        # Convert to tensors with consistent shapes
+        images = torch.FloatTensor(np.stack(images)) / 255.0  # (B, H, W, C)
+        images = images.permute(0, 3, 1, 2)  # Convert to (B, C, H, W)
+        qpos = torch.FloatTensor(np.stack(qpos))  # (B, 2)
+        
+        next_images = torch.FloatTensor(np.stack(next_images)) / 255.0  # (B, H, W, C)
+        next_images = next_images.permute(0, 3, 1, 2)  # Convert to (B, C, H, W)
+        next_qpos = torch.FloatTensor(np.stack(next_qpos))  # (B, 2)
+        
+        actions = torch.FloatTensor(np.stack(actions))  # (B, 1)
+        rewards = torch.FloatTensor(np.stack(rewards))  # (B,)
+        dones = torch.FloatTensor(np.stack(dones))  # (B,)
         
         return (images, qpos), actions, rewards, (next_images, next_qpos), dones
     
@@ -194,8 +213,9 @@ class SAC:
     
     def select_action(self, state, evaluate=False):
         image, qpos = state
+        # Add batch dimension and normalize
         image = torch.FloatTensor(image).permute(2, 0, 1).unsqueeze(0).to(self.device) / 255.0
-        qpos = torch.FloatTensor(qpos).unsqueeze(0).to(self.device)
+        qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)  # Ensure 2D: [1, 2]
         
         if evaluate:
             with torch.no_grad():
@@ -216,13 +236,13 @@ class SAC:
         (next_image, next_qpos) = next_state
         
         # Move to device
-        image = image.to(self.device)
-        qpos = qpos.to(self.device)
-        action = action.to(self.device)
-        reward = reward.to(self.device)
-        next_image = next_image.to(self.device)
-        next_qpos = next_qpos.to(self.device)
-        done = done.to(self.device)
+        image = image.to(self.device)  # [B, C, H, W]
+        qpos = qpos.to(self.device)    # [B, 2]
+        action = action.to(self.device) # [B, 1]
+        reward = reward.to(self.device) # [B]
+        next_image = next_image.to(self.device)  # [B, C, H, W]
+        next_qpos = next_qpos.to(self.device)    # [B, 2]
+        done = done.to(self.device)    # [B]
         
         # Update critics
         with torch.no_grad():
