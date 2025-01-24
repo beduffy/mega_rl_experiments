@@ -13,6 +13,7 @@ from datetime import datetime
 import argparse
 import time
 import torch.nn.functional as F
+import cv2
 
 from simulated_pixel_servo_point_flag_at_target import ServoEnv
 
@@ -23,7 +24,7 @@ class ReplayBuffer:
         self.pos = 0
         self.full = False
         
-        # Pre-allocate tensors on GPU
+        # Pre-allocate tensors on specified device
         self.images = torch.zeros((capacity, 3, 84, 84), dtype=torch.uint8, device=device)
         self.next_images = torch.zeros((capacity, 3, 84, 84), dtype=torch.uint8, device=device)
         self.qpos = torch.zeros((capacity, 2), dtype=torch.float32, device=device)
@@ -36,24 +37,38 @@ class ReplayBuffer:
         image, qpos = state
         next_image, next_qpos = next_state
         
-        # Convert to tensors and move to GPU
-        with torch.cuda.stream(torch.cuda.Stream()):
-            self.images[self.pos] = torch.from_numpy(np.transpose(image, (2, 0, 1))).to(self.device)
-            self.next_images[self.pos] = torch.from_numpy(np.transpose(next_image, (2, 0, 1))).to(self.device)
-            self.qpos[self.pos] = torch.from_numpy(np.array(qpos, dtype=np.float32)).to(self.device)
-            self.next_qpos[self.pos] = torch.from_numpy(np.array(next_qpos, dtype=np.float32)).to(self.device)
-            self.actions[self.pos] = torch.from_numpy(np.array(action, dtype=np.float32)).to(self.device)
-            self.rewards[self.pos] = torch.tensor(reward, dtype=torch.float32, device=self.device)
-            self.dones[self.pos] = torch.tensor(done, dtype=torch.float32, device=self.device)
+        # Resize images to 84x84 and convert to CHW format
+        image = cv2.resize(image, (84, 84))
+        next_image = cv2.resize(next_image, (84, 84))
+        image = np.transpose(image, (2, 0, 1))
+        next_image = np.transpose(next_image, (2, 0, 1))
+        
+        # Convert to tensors and move to device
+        if self.device == 'cuda':
+            with torch.cuda.stream(torch.cuda.Stream()):
+                self._push_to_device(image, qpos, action, reward, next_image, next_qpos, done)
+        else:
+            self._push_to_device(image, qpos, action, reward, next_image, next_qpos, done)
         
         self.pos = (self.pos + 1) % self.capacity
         self.full = self.full or self.pos == 0
     
+    def _push_to_device(self, image, qpos, action, reward, next_image, next_qpos, done):
+        self.images[self.pos] = torch.from_numpy(image).to(self.device)
+        self.next_images[self.pos] = torch.from_numpy(next_image).to(self.device)
+        self.qpos[self.pos] = torch.from_numpy(np.array(qpos, dtype=np.float32)).to(self.device)
+        self.next_qpos[self.pos] = torch.from_numpy(np.array(next_qpos, dtype=np.float32)).to(self.device)
+        self.actions[self.pos] = torch.from_numpy(np.array(action, dtype=np.float32)).to(self.device)
+        self.rewards[self.pos] = torch.tensor(reward, dtype=torch.float32, device=self.device)
+        self.dones[self.pos] = torch.tensor(done, dtype=torch.float32, device=self.device)
+    
     def sample(self, batch_size):
         max_pos = self.capacity if self.full else self.pos
-        indices = torch.randint(0, max_pos, (batch_size,), device=self.device)
+        if self.device == 'cuda':
+            indices = torch.randint(0, max_pos, (batch_size,), device=self.device)
+        else:
+            indices = torch.randint(0, max_pos, (batch_size,))
         
-        # Efficient indexing on GPU
         return (
             (self.images[indices].float() / 255.0,
              self.qpos[indices]),
@@ -191,7 +206,7 @@ class Critic(nn.Module):
 
 class SAC:
     def __init__(self, env, device, log_dir, lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
-                 buffer_size=100000, batch_size=256):  # Increased batch size
+                 buffer_size=100000, batch_size=256):
         self.env = env
         self.device = device
         self.gamma = gamma
@@ -199,7 +214,7 @@ class SAC:
         self.alpha = alpha
         self.batch_size = batch_size
         
-        # Move models to device immediately after creation
+        # Create models and move to device
         self.policy = SACPolicy().to(device)
         self.critic1 = Critic().to(device)
         self.critic2 = Critic().to(device)
@@ -210,7 +225,7 @@ class SAC:
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target.load_state_dict(self.critic2.state_dict())
         
-        # Create optimizers after moving models to device
+        # Create optimizers
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=lr)
         self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr)
         self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr)
@@ -218,10 +233,6 @@ class SAC:
         self.replay_buffer = ReplayBuffer(buffer_size, device)
         self.writer = SummaryWriter(log_dir)
         self.train_steps = 0
-        
-        # Create CUDA events for timing
-        self.start = torch.cuda.Event(enable_timing=True)
-        self.end = torch.cuda.Event(enable_timing=True)
     
     def select_action(self, state, evaluate=False):
         image, qpos = state
