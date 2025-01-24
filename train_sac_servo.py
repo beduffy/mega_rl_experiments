@@ -33,6 +33,21 @@ class ReplayBuffer:
         self.rewards = torch.zeros(capacity, dtype=torch.float32, device=device)
         self.dones = torch.zeros(capacity, dtype=torch.float32, device=device)
     
+    def __len__(self):
+        return self.capacity if self.full else self.pos
+    
+    def _push_to_device(self, image, qpos, action, reward, next_image, next_qpos, done):
+        qpos = np.array(qpos, dtype=np.float32).flatten()
+        next_qpos = np.array(next_qpos, dtype=np.float32).flatten()
+        
+        self.images[self.pos] = torch.from_numpy(image).to(self.device)
+        self.next_images[self.pos] = torch.from_numpy(next_image).to(self.device)
+        self.qpos[self.pos] = torch.from_numpy(qpos).to(self.device)
+        self.next_qpos[self.pos] = torch.from_numpy(next_qpos).to(self.device)
+        self.actions[self.pos] = torch.from_numpy(np.array(action, dtype=np.float32)).reshape(1)
+        self.rewards[self.pos] = torch.tensor(reward, dtype=torch.float32)
+        self.dones[self.pos] = torch.tensor(done, dtype=torch.float32)
+    
     def push(self, state, action, reward, next_state, done):
         image, qpos = state
         next_image, next_qpos = next_state
@@ -53,15 +68,6 @@ class ReplayBuffer:
         self.pos = (self.pos + 1) % self.capacity
         self.full = self.full or self.pos == 0
     
-    def _push_to_device(self, image, qpos, action, reward, next_image, next_qpos, done):
-        self.images[self.pos] = torch.from_numpy(image).to(self.device)
-        self.next_images[self.pos] = torch.from_numpy(next_image).to(self.device)
-        self.qpos[self.pos] = torch.from_numpy(np.array(qpos, dtype=np.float32)).to(self.device)
-        self.next_qpos[self.pos] = torch.from_numpy(np.array(next_qpos, dtype=np.float32)).to(self.device)
-        self.actions[self.pos] = torch.from_numpy(np.array(action, dtype=np.float32)).to(self.device)
-        self.rewards[self.pos] = torch.tensor(reward, dtype=torch.float32, device=self.device)
-        self.dones[self.pos] = torch.tensor(done, dtype=torch.float32, device=self.device)
-    
     def sample(self, batch_size):
         max_pos = self.capacity if self.full else self.pos
         if self.device == 'cuda':
@@ -71,11 +77,11 @@ class ReplayBuffer:
         
         return (
             (self.images[indices].float() / 255.0,
-             self.qpos[indices]),
+             self.qpos[indices]),  # Already correct shape [batch, 2]
             self.actions[indices],
             self.rewards[indices],
             (self.next_images[indices].float() / 255.0,
-             self.next_qpos[indices]),
+             self.next_qpos[indices]),  # Already correct shape [batch, 2]
             self.dones[indices]
         )
 
@@ -221,11 +227,9 @@ class SAC:
         self.critic1_target = Critic().to(device)
         self.critic2_target = Critic().to(device)
         
-        # Hard copy parameters
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target.load_state_dict(self.critic2.state_dict())
         
-        # Create optimizers
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=lr)
         self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr)
         self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr)
@@ -237,9 +241,12 @@ class SAC:
     def select_action(self, state, evaluate=False):
         image, qpos = state
         
+        # Resize image
+        image = cv2.resize(image, (84, 84))
+        
         # Convert HWC to CHW format and move to device
         image = torch.FloatTensor(np.transpose(image, (2, 0, 1))).unsqueeze(0).to(self.device) / 255.0
-        qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)
+        qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)  # Ensure [1, 2] shape
         
         with torch.no_grad():
             if evaluate:
@@ -248,12 +255,11 @@ class SAC:
                 action, _ = self.policy.sample(image, qpos)
         return action
     
-    @torch.cuda.amp.autocast()  # Enable automatic mixed precision
     def train_step(self):
         if len(self.replay_buffer) < self.batch_size:
             return
         
-        # Sample batch (already on GPU)
+        # Sample batch (already on device)
         state, action, reward, next_state, done = self.replay_buffer.sample(self.batch_size)
         (image, qpos) = state
         (next_image, next_qpos) = next_state
@@ -351,7 +357,12 @@ def main():
     args = parse_args()
     
     # Set device
-    device = torch.device(args.device)
+    if args.device == 'cuda' and not torch.cuda.is_available():
+        print("CUDA not available, using CPU instead")
+        device = 'cpu'
+    else:
+        device = args.device
+    
     print(f"\nUsing device: {device}")
     
     # Create environment
@@ -359,7 +370,7 @@ def main():
     
     # Create directories
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_dir = os.path.join(args.log_dir, f'sac_servo_{timestamp}')
+    log_dir = os.path.join('runs', f'sac_servo_{timestamp}')
     os.makedirs(log_dir, exist_ok=True)
     
     # Save arguments
