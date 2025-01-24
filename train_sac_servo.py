@@ -12,53 +12,64 @@ import os
 from datetime import datetime
 import argparse
 import time
+import torch.nn.functional as F
 
 from simulated_pixel_servo_point_flag_at_target import ServoEnv
 
 class ReplayBuffer:
     def __init__(self, capacity=100000):
         self.buffer = deque(maxlen=capacity)
+        self.batch_images = None
+        self.batch_next_images = None
     
     def push(self, state, action, reward, next_state, done):
-        # Ensure consistent shapes when storing
+        # Ensure images are in CHW format when storing
         image, qpos = state
         next_image, next_qpos = next_state
         
-        # Convert everything to numpy arrays with consistent shapes
+        # Convert HWC to CHW format
+        image = np.transpose(image, (2, 0, 1))
+        next_image = np.transpose(next_image, (2, 0, 1))
+        
         self.buffer.append((
-            (np.array(image, dtype=np.float32),  # image shape: (H, W, C)
-             np.array(qpos, dtype=np.float32).flatten()),  # qpos shape: (2,)
-            np.array(action, dtype=np.float32).reshape(-1),  # action shape: (1,)
-            np.array(reward, dtype=np.float32),  # reward shape: scalar
-            (np.array(next_image, dtype=np.float32),  # next_image shape: (H, W, C)
-             np.array(next_qpos, dtype=np.float32).flatten()),  # next_qpos shape: (2,)
-            np.array(done, dtype=np.float32)  # done shape: scalar
+            (image.copy(), np.array(qpos, dtype=np.float32).flatten()),
+            np.array(action, dtype=np.float32).reshape(-1),
+            np.array(reward, dtype=np.float32),
+            (next_image.copy(), np.array(next_qpos, dtype=np.float32).flatten()),
+            np.array(done, dtype=np.float32)
         ))
     
     def sample(self, batch_size):
         samples = random.sample(self.buffer, batch_size)
         
-        # Unpack and stack samples
-        states, actions, rewards, next_states, dones = zip(*samples)
+        # Initialize arrays if not done yet
+        if self.batch_images is None:
+            # Get shapes from first sample (now in CHW format)
+            img_shape = samples[0][0][0].shape
+            self.batch_images = np.zeros((batch_size,) + img_shape, dtype=np.float32)
+            self.batch_next_images = np.zeros((batch_size,) + img_shape, dtype=np.float32)
         
-        # Unpack states and next_states
-        images, qpos = zip(*states)
-        next_images, next_qpos = zip(*next_states)
+        # Batch processing (images already in CHW format)
+        for i, (state, action, reward, next_state, done) in enumerate(samples):
+            self.batch_images[i] = state[0]
+            self.batch_next_images[i] = next_state[0]
         
-        # Convert to tensors with consistent shapes
-        images = torch.FloatTensor(np.stack(images)) / 255.0  # (B, H, W, C)
-        images = images.permute(0, 3, 1, 2)  # Convert to (B, C, H, W)
-        qpos = torch.FloatTensor(np.stack(qpos))  # (B, 2)
+        qpos = np.stack([s[0][1] for s in samples])
+        next_qpos = np.stack([s[3][1] for s in samples])
+        actions = np.stack([s[1] for s in samples])
+        rewards = np.stack([s[2] for s in samples])
+        dones = np.stack([s[4] for s in samples])
         
-        next_images = torch.FloatTensor(np.stack(next_images)) / 255.0  # (B, H, W, C)
-        next_images = next_images.permute(0, 3, 1, 2)  # Convert to (B, C, H, W)
-        next_qpos = torch.FloatTensor(np.stack(next_qpos))  # (B, 2)
-        
-        actions = torch.FloatTensor(np.stack(actions)).unsqueeze(-1)  # (B, 1)
-        rewards = torch.FloatTensor(np.stack(rewards))  # (B,)
-        dones = torch.FloatTensor(np.stack(dones))  # (B,)
-        
-        return (images, qpos), actions, rewards, (next_images, next_qpos), dones
+        # Convert to tensors (images already in CHW format)
+        return (
+            (torch.from_numpy(self.batch_images).to(torch.float32) / 255.0,
+             torch.from_numpy(qpos).to(torch.float32)),
+            torch.from_numpy(actions).to(torch.float32),
+            torch.from_numpy(rewards).to(torch.float32),
+            (torch.from_numpy(self.batch_next_images).to(torch.float32) / 255.0,
+             torch.from_numpy(next_qpos).to(torch.float32)),
+            torch.from_numpy(dones).to(torch.float32)
+        )
     
     def __len__(self):
         return len(self.buffer)
@@ -66,57 +77,36 @@ class ReplayBuffer:
 class SACPolicy(nn.Module):
     def __init__(self, image_size=240, qpos_dim=2, action_dim=1):
         super().__init__()
-        def conv2d_size_out(size, kernel_size=3, stride=2):
-            return ((size - kernel_size) // stride) + 1
         
-        size1 = conv2d_size_out(image_size)
-        size2 = conv2d_size_out(size1)
-        self.flat_size = 32 * size2 * size2
-        
-        # More stable CNN with proper normalization
+        # Much smaller CNN (same as critic for simplicity)
         self.conv = nn.Sequential(
-            # First conv block with smaller initial features
-            nn.Conv2d(3, 8, kernel_size=3, stride=2),
-            nn.BatchNorm2d(8),
+            nn.Conv2d(3, 8, kernel_size=8, stride=4),
             nn.ReLU(),
-            nn.MaxPool2d(2),  # Add pooling to reduce feature magnitude
-            
-            # Second conv block
-            nn.Conv2d(8, 16, kernel_size=3, stride=2),
-            nn.BatchNorm2d(16),
+            nn.Conv2d(8, 16, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            # Final conv block
-            nn.Conv2d(16, 32, kernel_size=3, stride=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 4)),  # Force output size
+            nn.AdaptiveAvgPool2d((3, 3)),
             nn.Flatten()
         )
         
-        # Recalculate flat size after adaptive pooling
-        self.flat_size = 32 * 4 * 4
+        self.flat_size = 32 * 3 * 3  # 288
         
-        # Actor network with proper normalization
+        # Smaller actor network
         self.actor_net = nn.Sequential(
             nn.Linear(self.flat_size + qpos_dim, 256),
-            nn.LayerNorm(256),
             nn.ReLU(),
-            nn.Dropout(0.1),  # Add dropout for regularization
-            
             nn.Linear(256, 128),
-            nn.LayerNorm(128),
-            nn.ReLU(),
-            nn.Dropout(0.1)
+            nn.ReLU()
         )
         
-        # Output layers with careful initialization
+        # Output layers
         self.mean = nn.Linear(128, action_dim)
+        self.log_std = nn.Linear(128, action_dim)
+        
+        # Initialize output layers
         torch.nn.init.uniform_(self.mean.weight, -1e-3, 1e-3)
         torch.nn.init.uniform_(self.mean.bias, -1e-3, 1e-3)
-        
-        self.log_std = nn.Linear(128, action_dim)
         torch.nn.init.uniform_(self.log_std.weight, -1e-3, 1e-3)
         torch.nn.init.uniform_(self.log_std.bias, -1e-3, 1e-3)
     
@@ -176,48 +166,35 @@ class SACPolicy(nn.Module):
 class Critic(nn.Module):
     def __init__(self, image_size=240, qpos_dim=2, action_dim=1):
         super().__init__()
-        def conv2d_size_out(size, kernel_size=3, stride=2):
-            return ((size - kernel_size) // stride) + 1
         
-        size1 = conv2d_size_out(image_size)
-        size2 = conv2d_size_out(size1)
-        self.flat_size = 32 * size2 * size2
-        
-        # Shared image encoder
+        # Much smaller CNN
         self.conv = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=2),
+            nn.Conv2d(3, 8, kernel_size=8, stride=4),  # Bigger stride to reduce dimensions faster
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2),
+            nn.Conv2d(8, 16, kernel_size=4, stride=2),
             nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((3, 3)),  # Force small output size
             nn.Flatten()
         )
         
-        # Q network
+        # Calculate flat size
+        self.flat_size = 32 * 3 * 3  # Much smaller: 288
+        
+        # Smaller Q network
         self.q_net = nn.Sequential(
             nn.Linear(self.flat_size + qpos_dim + action_dim, 256),
             nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
+            nn.Linear(256, 1)
         )
     
     def forward(self, image, qpos, action):
-        # Print shapes for debugging
-        # print(f"Image shape: {image.shape}")
-        # print(f"Qpos shape: {qpos.shape}")
-        # print(f"Action shape: {action.shape}")
-        
-        features = self.conv(image)  # [B, flat_size]
-        
-        # Ensure all inputs are 2D: [batch_size, features]
+        features = self.conv(image)
         if len(qpos.shape) > 2:
             qpos = qpos.reshape(qpos.shape[0], -1)
         if len(action.shape) > 2:
             action = action.reshape(action.shape[0], -1)
-        
-        # print(f"Features shape: {features.shape}")
-        # print(f"Reshaped qpos shape: {qpos.shape}")
-        # print(f"Reshaped action shape: {action.shape}")
         
         x = torch.cat([features, qpos, action], dim=1)
         return self.q_net(x)
@@ -268,95 +245,70 @@ class SAC:
     
     def select_action(self, state, evaluate=False):
         image, qpos = state
-        # print("\nDEBUG select_action:")
-        # print(f"Original image shape: {image.shape}")
-        # print(f"Original qpos shape: {qpos.shape}")
         
-        # Add batch dimension and normalize
-        image = torch.FloatTensor(image).permute(2, 0, 1).unsqueeze(0).to(self.device) / 255.0
+        # Convert HWC to CHW format
+        image = torch.FloatTensor(np.transpose(image, (2, 0, 1))).unsqueeze(0).to(self.device) / 255.0
         qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)
         
-        # print(f"Processed image shape: {image.shape}")
-        # print(f"Processed qpos shape: {qpos.shape}")
-        
-        if evaluate:
-            with torch.no_grad():
-                mean, _ = self.policy(image, qpos)
-                return torch.tanh(mean) * np.pi
-        else:
-            with torch.no_grad():
+        with torch.no_grad():
+            if evaluate:
                 action, _ = self.policy.sample(image, qpos)
-                return action
+            else:
+                action, _ = self.policy.sample(image, qpos)
+        return action
     
     def train_step(self):
         if len(self.replay_buffer) < self.batch_size:
             return
         
-        # Sample from replay buffer
+        # Sample and prepare batch (now faster with optimized replay buffer)
         state, action, reward, next_state, done = self.replay_buffer.sample(self.batch_size)
         (image, qpos) = state
         (next_image, next_qpos) = next_state
         
-        # Move to device and ensure shapes
-        image = image.to(self.device)  # [B, C, H, W]
-        qpos = qpos.to(self.device)    # [B, 2]
-        action = action.to(self.device) # [B, 1]
-        reward = reward.unsqueeze(-1).to(self.device)  # [B, 1]
-        next_image = next_image.to(self.device)
-        next_qpos = next_qpos.to(self.device)
-        done = done.unsqueeze(-1).to(self.device)  # [B, 1]
-        
-        # Update critics
+        # Pre-compute policy outputs for both current and next state
         with torch.no_grad():
             next_action, next_log_prob = self.policy.sample(next_image, next_qpos)
+            current_action, current_log_prob = self.policy.sample(image, qpos)
+        
+        # Update critics (in parallel)
+        with torch.no_grad():
             q1_next = self.critic1_target(next_image, next_qpos, next_action)
             q2_next = self.critic2_target(next_image, next_qpos, next_action)
             q_next = torch.min(q1_next, q2_next) - self.alpha * next_log_prob
-            q_target = reward + (1 - done) * self.gamma * q_next
+            q_target = reward.unsqueeze(-1) + (1 - done.unsqueeze(-1)) * self.gamma * q_next
         
-        # Critic 1 loss
+        # Critic updates (combined for efficiency)
         q1 = self.critic1(image, qpos, action)
-        q1_loss = nn.MSELoss()(q1, q_target.detach())
-        
-        # Critic 2 loss
         q2 = self.critic2(image, qpos, action)
-        q2_loss = nn.MSELoss()(q2, q_target.detach())
+        q1_loss = F.mse_loss(q1, q_target)
+        q2_loss = F.mse_loss(q2, q_target)
         
-        # Update critics
-        self.critic1_optim.zero_grad()
+        # Combined backward pass for critics
+        self.critic1_optim.zero_grad(set_to_none=True)
+        self.critic2_optim.zero_grad(set_to_none=True)
         q1_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic1.parameters(), 1.0)  # Add gradient clipping
-        self.critic1_optim.step()
-        
-        self.critic2_optim.zero_grad()
         q2_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), 1.0)  # Add gradient clipping
+        self.critic1_optim.step()
         self.critic2_optim.step()
         
-        # Update policy
-        new_action, log_prob = self.policy.sample(image, qpos)
-        q1_new = self.critic1(image, qpos, new_action)
-        q2_new = self.critic2(image, qpos, new_action)
-        q_new = torch.min(q1_new, q2_new)
+        # Policy update (using pre-computed actions)
+        q1_pi = self.critic1(image, qpos, current_action)
+        q2_pi = self.critic2(image, qpos, current_action)
+        min_q_pi = torch.min(q1_pi, q2_pi)
+        policy_loss = (self.alpha * current_log_prob - min_q_pi).mean()
         
-        policy_loss = (self.alpha * log_prob - q_new).mean()
-        
-        self.policy_optim.zero_grad()
+        self.policy_optim.zero_grad(set_to_none=True)
         policy_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)  # Add gradient clipping
         self.policy_optim.step()
         
-        # Update target networks
-        for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-        
-        for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-        
-        # Log metrics
-        self.writer.add_scalar('Loss/critic1', q1_loss.item(), self.train_steps)
-        self.writer.add_scalar('Loss/critic2', q2_loss.item(), self.train_steps)
-        self.writer.add_scalar('Loss/policy', policy_loss.item(), self.train_steps)
+        # Soft update target networks (less frequently)
+        if self.train_steps % 2 == 0:  # Update every other step
+            with torch.no_grad():
+                for target_param, param in zip(self.critic1_target.parameters(), self.critic1.parameters()):
+                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+                for target_param, param in zip(self.critic2_target.parameters(), self.critic2.parameters()):
+                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
         
         self.train_steps += 1
 
@@ -401,6 +353,9 @@ def parse_args():
     
     return parser.parse_args()
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters())
+
 def main():
     args = parse_args()
     
@@ -422,15 +377,23 @@ def main():
         env=env,
         device=device,
         log_dir=log_dir,
-        lr=args.lr,
-        gamma=args.gamma,
-        tau=args.tau,
-        alpha=args.alpha,
-        buffer_size=args.buffer_size,
-        batch_size=args.batch_size
+        lr=3e-4,
+        gamma=0.99,
+        tau=0.005,
+        alpha=0.2,
+        buffer_size=100000,
+        batch_size=128  # Larger batch size since operations will be much faster now
     )
     
-    # Add FPS and progress tracking
+    # Add detailed timing
+    timings = {
+        'env_step': 0,
+        'select_action': 0,
+        'buffer_push': 0,
+        'train_step': 0
+    }
+    counts = {k: 0 for k in timings.keys()}
+    
     start_time = time.time()
     total_steps = 0
     last_print_time = start_time
@@ -438,6 +401,12 @@ def main():
     
     print(f"\nStarting training with device: {args.device}")
     print(f"Render mode: {args.render_mode}")
+    # Print model sizes
+    print("\nModel sizes (parameters):")
+    print(f"Policy CNN: {count_parameters(agent.policy.conv):,}")
+    print(f"Policy Actor: {count_parameters(agent.policy.actor_net):,}")
+    print(f"Critic: {count_parameters(agent.critic1):,}")
+    print(f"Total: {count_parameters(agent.policy) + count_parameters(agent.critic1) * 2:,}")
     
     # Training loop
     for episode in range(args.episodes):
@@ -446,21 +415,37 @@ def main():
         episode_steps = 0
         
         for step in range(args.max_steps):
-            # Track steps
             total_steps += 1
             episode_steps += 1
             
-            # Training step
+            # Time select_action
+            t0 = time.time()
             action = agent.select_action(state)
-            next_state, reward, done, _ = env.step(action.cpu().numpy()[0])
+            timings['select_action'] += time.time() - t0
+            counts['select_action'] += 1
             
+            # Time env_step
+            t0 = time.time()
+            next_state, reward, done, _ = env.step(action.cpu().numpy()[0])
+            timings['env_step'] += time.time() - t0
+            counts['env_step'] += 1
+            
+            # Time buffer_push
+            t0 = time.time()
             agent.replay_buffer.push(state, action.cpu().numpy(), reward, next_state, done)
+            timings['buffer_push'] += time.time() - t0
+            counts['buffer_push'] += 1
+            
+            # Time train_step
+            t0 = time.time()
             agent.train_step()
+            timings['train_step'] += time.time() - t0
+            counts['train_step'] += 1
             
             episode_reward += reward
             state = next_state
             
-            # Print progress every 20 seconds
+            # Print progress and timing stats every 20 seconds
             current_time = time.time()
             if current_time - last_print_time >= 20:
                 steps_since_last_print = total_steps - last_print_steps
@@ -474,6 +459,17 @@ def main():
                 print(f"Buffer Size: {len(agent.replay_buffer)}/{args.buffer_size}")
                 print(f"Current Episode Steps: {episode_steps}")
                 print(f"Current Episode Reward: {episode_reward:.2f}")
+                
+                # Print timing breakdown
+                print("\nTiming Breakdown (ms per call):")
+                for k in timings:
+                    if counts[k] > 0:
+                        avg_time = (timings[k] / counts[k]) * 1000
+                        print(f"{k}: {avg_time:.2f}ms")
+                
+                # Reset timing stats
+                timings = {k: 0 for k in timings}
+                counts = {k: 0 for k in counts}
                 
                 last_print_time = current_time
                 last_print_steps = total_steps
@@ -507,6 +503,7 @@ def main():
             mean_reward = np.mean(eval_rewards)
             agent.writer.add_scalar('Reward/eval', mean_reward, episode)
             print(f"\nEpisode {episode}: Eval reward = {mean_reward:.2f}")
+
 
 if __name__ == '__main__':
     main() 
