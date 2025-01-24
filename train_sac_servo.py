@@ -200,19 +200,8 @@ class Critic(nn.Module):
         return self.q_net(x)
 
 class SAC:
-    def __init__(
-        self,
-        env,
-        device,
-        log_dir,
-        hidden_dim: int = 256,
-        lr: float = 3e-4,
-        gamma: float = 0.99,
-        tau: float = 0.005,
-        alpha: float = 0.2,
-        buffer_size: int = 100000,
-        batch_size: int = 256,
-    ):
+    def __init__(self, env, device, log_dir, lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
+                 buffer_size=100000, batch_size=64):
         self.env = env
         self.device = device
         self.gamma = gamma
@@ -220,33 +209,30 @@ class SAC:
         self.alpha = alpha
         self.batch_size = batch_size
         
-        # Initialize networks
+        # Move models to device immediately after creation
         self.policy = SACPolicy().to(device)
         self.critic1 = Critic().to(device)
         self.critic2 = Critic().to(device)
         self.critic1_target = Critic().to(device)
         self.critic2_target = Critic().to(device)
         
-        # Copy parameters to target networks
+        # Hard copy parameters
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target.load_state_dict(self.critic2.state_dict())
         
-        # Initialize optimizers
-        self.policy_optim = optim.Adam(self.policy.parameters(), lr=lr)
-        self.critic1_optim = optim.Adam(self.critic1.parameters(), lr=lr)
-        self.critic2_optim = optim.Adam(self.critic2.parameters(), lr=lr)
+        # Create optimizers after moving models to device
+        self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+        self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr)
+        self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr)
         
-        # Initialize replay buffer
         self.replay_buffer = ReplayBuffer(buffer_size)
-        
-        # Initialize tensorboard
         self.writer = SummaryWriter(log_dir)
         self.train_steps = 0
     
     def select_action(self, state, evaluate=False):
         image, qpos = state
         
-        # Convert HWC to CHW format
+        # Convert HWC to CHW format and move to device
         image = torch.FloatTensor(np.transpose(image, (2, 0, 1))).unsqueeze(0).to(self.device) / 255.0
         qpos = torch.FloatTensor(qpos).flatten().unsqueeze(0).to(self.device)
         
@@ -261,10 +247,19 @@ class SAC:
         if len(self.replay_buffer) < self.batch_size:
             return
         
-        # Sample and prepare batch (now faster with optimized replay buffer)
+        # Get batch and move to device
         state, action, reward, next_state, done = self.replay_buffer.sample(self.batch_size)
         (image, qpos) = state
         (next_image, next_qpos) = next_state
+        
+        # Move everything to device
+        image = image.to(self.device)
+        qpos = qpos.to(self.device)
+        action = action.to(self.device)
+        reward = reward.to(self.device)
+        next_image = next_image.to(self.device)
+        next_qpos = next_qpos.to(self.device)
+        done = done.to(self.device)
         
         # Pre-compute policy outputs for both current and next state
         with torch.no_grad():
@@ -285,12 +280,12 @@ class SAC:
         q2_loss = F.mse_loss(q2, q_target)
         
         # Combined backward pass for critics
-        self.critic1_optim.zero_grad(set_to_none=True)
-        self.critic2_optim.zero_grad(set_to_none=True)
+        self.critic1_optimizer.zero_grad(set_to_none=True)
+        self.critic2_optimizer.zero_grad(set_to_none=True)
         q1_loss.backward()
         q2_loss.backward()
-        self.critic1_optim.step()
-        self.critic2_optim.step()
+        self.critic1_optimizer.step()
+        self.critic2_optimizer.step()
         
         # Policy update (using pre-computed actions)
         q1_pi = self.critic1(image, qpos, current_action)
@@ -298,9 +293,9 @@ class SAC:
         min_q_pi = torch.min(q1_pi, q2_pi)
         policy_loss = (self.alpha * current_log_prob - min_q_pi).mean()
         
-        self.policy_optim.zero_grad(set_to_none=True)
+        self.policy_optimizer.zero_grad(set_to_none=True)
         policy_loss.backward()
-        self.policy_optim.step()
+        self.policy_optimizer.step()
         
         # Soft update target networks (less frequently)
         if self.train_steps % 2 == 0:  # Update every other step
@@ -359,6 +354,13 @@ def count_parameters(model):
 def main():
     args = parse_args()
     
+    # Set device
+    device = torch.device(args.device)
+    print(f"\nUsing device: {device}")
+    
+    # Create environment
+    env = ServoEnv(render_mode=args.render_mode)
+    
     # Create directories
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     log_dir = os.path.join(args.log_dir, f'sac_servo_{timestamp}')
@@ -369,21 +371,24 @@ def main():
         for arg, value in vars(args).items():
             f.write(f'{arg}: {value}\n')
     
-    # Initialize environment and agent
-    env = ServoEnv(render_mode=args.render_mode)
-    device = torch.device(args.device)
-    
+    # Initialize agent
     agent = SAC(
         env=env,
         device=device,
         log_dir=log_dir,
-        lr=3e-4,
-        gamma=0.99,
-        tau=0.005,
-        alpha=0.2,
-        buffer_size=100000,
-        batch_size=128  # Larger batch size since operations will be much faster now
+        lr=args.lr,
+        gamma=args.gamma,
+        tau=args.tau,
+        alpha=args.alpha,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size
     )
+    
+    # Print model device info
+    print("\nModel devices:")
+    print(f"Policy: {next(agent.policy.parameters()).device}")
+    print(f"Critic1: {next(agent.critic1.parameters()).device}")
+    print(f"Critic2: {next(agent.critic2.parameters()).device}")
     
     # Add detailed timing
     timings = {
