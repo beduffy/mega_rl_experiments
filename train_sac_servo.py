@@ -17,62 +17,52 @@ import torch.nn.functional as F
 from simulated_pixel_servo_point_flag_at_target import ServoEnv
 
 class ReplayBuffer:
-    def __init__(self, capacity=100000):
-        self.buffer = deque(maxlen=capacity)
-        self.batch_images = None
-        self.batch_next_images = None
+    def __init__(self, capacity=100000, device='cuda'):
+        self.device = device
+        self.capacity = capacity
+        self.pos = 0
+        self.full = False
+        
+        # Pre-allocate tensors on GPU
+        self.images = torch.zeros((capacity, 3, 84, 84), dtype=torch.uint8, device=device)
+        self.next_images = torch.zeros((capacity, 3, 84, 84), dtype=torch.uint8, device=device)
+        self.qpos = torch.zeros((capacity, 2), dtype=torch.float32, device=device)
+        self.next_qpos = torch.zeros((capacity, 2), dtype=torch.float32, device=device)
+        self.actions = torch.zeros((capacity, 1), dtype=torch.float32, device=device)
+        self.rewards = torch.zeros(capacity, dtype=torch.float32, device=device)
+        self.dones = torch.zeros(capacity, dtype=torch.float32, device=device)
     
     def push(self, state, action, reward, next_state, done):
-        # Ensure images are in CHW format when storing
         image, qpos = state
         next_image, next_qpos = next_state
         
-        # Convert HWC to CHW format
-        image = np.transpose(image, (2, 0, 1))
-        next_image = np.transpose(next_image, (2, 0, 1))
+        # Convert to tensors and move to GPU
+        with torch.cuda.stream(torch.cuda.Stream()):
+            self.images[self.pos] = torch.from_numpy(np.transpose(image, (2, 0, 1))).to(self.device)
+            self.next_images[self.pos] = torch.from_numpy(np.transpose(next_image, (2, 0, 1))).to(self.device)
+            self.qpos[self.pos] = torch.from_numpy(np.array(qpos, dtype=np.float32)).to(self.device)
+            self.next_qpos[self.pos] = torch.from_numpy(np.array(next_qpos, dtype=np.float32)).to(self.device)
+            self.actions[self.pos] = torch.from_numpy(np.array(action, dtype=np.float32)).to(self.device)
+            self.rewards[self.pos] = torch.tensor(reward, dtype=torch.float32, device=self.device)
+            self.dones[self.pos] = torch.tensor(done, dtype=torch.float32, device=self.device)
         
-        self.buffer.append((
-            (image.copy(), np.array(qpos, dtype=np.float32).flatten()),
-            np.array(action, dtype=np.float32).reshape(-1),
-            np.array(reward, dtype=np.float32),
-            (next_image.copy(), np.array(next_qpos, dtype=np.float32).flatten()),
-            np.array(done, dtype=np.float32)
-        ))
+        self.pos = (self.pos + 1) % self.capacity
+        self.full = self.full or self.pos == 0
     
     def sample(self, batch_size):
-        samples = random.sample(self.buffer, batch_size)
+        max_pos = self.capacity if self.full else self.pos
+        indices = torch.randint(0, max_pos, (batch_size,), device=self.device)
         
-        # Initialize arrays if not done yet
-        if self.batch_images is None:
-            # Get shapes from first sample (now in CHW format)
-            img_shape = samples[0][0][0].shape
-            self.batch_images = np.zeros((batch_size,) + img_shape, dtype=np.float32)
-            self.batch_next_images = np.zeros((batch_size,) + img_shape, dtype=np.float32)
-        
-        # Batch processing (images already in CHW format)
-        for i, (state, action, reward, next_state, done) in enumerate(samples):
-            self.batch_images[i] = state[0]
-            self.batch_next_images[i] = next_state[0]
-        
-        qpos = np.stack([s[0][1] for s in samples])
-        next_qpos = np.stack([s[3][1] for s in samples])
-        actions = np.stack([s[1] for s in samples])
-        rewards = np.stack([s[2] for s in samples])
-        dones = np.stack([s[4] for s in samples])
-        
-        # Convert to tensors (images already in CHW format)
+        # Efficient indexing on GPU
         return (
-            (torch.from_numpy(self.batch_images).to(torch.float32) / 255.0,
-             torch.from_numpy(qpos).to(torch.float32)),
-            torch.from_numpy(actions).to(torch.float32),
-            torch.from_numpy(rewards).to(torch.float32),
-            (torch.from_numpy(self.batch_next_images).to(torch.float32) / 255.0,
-             torch.from_numpy(next_qpos).to(torch.float32)),
-            torch.from_numpy(dones).to(torch.float32)
+            (self.images[indices].float() / 255.0,
+             self.qpos[indices]),
+            self.actions[indices],
+            self.rewards[indices],
+            (self.next_images[indices].float() / 255.0,
+             self.next_qpos[indices]),
+            self.dones[indices]
         )
-    
-    def __len__(self):
-        return len(self.buffer)
 
 class SACPolicy(nn.Module):
     def __init__(self, image_size=240, qpos_dim=2, action_dim=1):
@@ -201,7 +191,7 @@ class Critic(nn.Module):
 
 class SAC:
     def __init__(self, env, device, log_dir, lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
-                 buffer_size=100000, batch_size=64):
+                 buffer_size=100000, batch_size=256):  # Increased batch size
         self.env = env
         self.device = device
         self.gamma = gamma
@@ -225,9 +215,13 @@ class SAC:
         self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr)
         self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr)
         
-        self.replay_buffer = ReplayBuffer(buffer_size)
+        self.replay_buffer = ReplayBuffer(buffer_size, device)
         self.writer = SummaryWriter(log_dir)
         self.train_steps = 0
+        
+        # Create CUDA events for timing
+        self.start = torch.cuda.Event(enable_timing=True)
+        self.end = torch.cuda.Event(enable_timing=True)
     
     def select_action(self, state, evaluate=False):
         image, qpos = state
@@ -243,51 +237,42 @@ class SAC:
                 action, _ = self.policy.sample(image, qpos)
         return action
     
+    @torch.cuda.amp.autocast()  # Enable automatic mixed precision
     def train_step(self):
         if len(self.replay_buffer) < self.batch_size:
             return
         
-        # Get batch and move to device
+        # Sample batch (already on GPU)
         state, action, reward, next_state, done = self.replay_buffer.sample(self.batch_size)
         (image, qpos) = state
         (next_image, next_qpos) = next_state
-        
-        # Move everything to device
-        image = image.to(self.device)
-        qpos = qpos.to(self.device)
-        action = action.to(self.device)
-        reward = reward.to(self.device)
-        next_image = next_image.to(self.device)
-        next_qpos = next_qpos.to(self.device)
-        done = done.to(self.device)
         
         # Pre-compute policy outputs for both current and next state
         with torch.no_grad():
             next_action, next_log_prob = self.policy.sample(next_image, next_qpos)
             current_action, current_log_prob = self.policy.sample(image, qpos)
         
-        # Update critics (in parallel)
+        # Compute Q-targets
         with torch.no_grad():
             q1_next = self.critic1_target(next_image, next_qpos, next_action)
             q2_next = self.critic2_target(next_image, next_qpos, next_action)
             q_next = torch.min(q1_next, q2_next) - self.alpha * next_log_prob
             q_target = reward.unsqueeze(-1) + (1 - done.unsqueeze(-1)) * self.gamma * q_next
         
-        # Critic updates (combined for efficiency)
+        # Update critics
         q1 = self.critic1(image, qpos, action)
         q2 = self.critic2(image, qpos, action)
         q1_loss = F.mse_loss(q1, q_target)
         q2_loss = F.mse_loss(q2, q_target)
         
-        # Combined backward pass for critics
+        # Combined backward pass
         self.critic1_optimizer.zero_grad(set_to_none=True)
         self.critic2_optimizer.zero_grad(set_to_none=True)
-        q1_loss.backward()
-        q2_loss.backward()
+        (q1_loss + q2_loss).backward()
         self.critic1_optimizer.step()
         self.critic2_optimizer.step()
         
-        # Policy update (using pre-computed actions)
+        # Policy update
         q1_pi = self.critic1(image, qpos, current_action)
         q2_pi = self.critic2(image, qpos, current_action)
         min_q_pi = torch.min(q1_pi, q2_pi)
@@ -297,8 +282,8 @@ class SAC:
         policy_loss.backward()
         self.policy_optimizer.step()
         
-        # Soft update target networks (less frequently)
-        if self.train_steps % 2 == 0:  # Update every other step
+        # Less frequent target updates
+        if self.train_steps % 2 == 0:
             with torch.no_grad():
                 for target_param, param in zip(self.critic1_target.parameters(), self.critic1.parameters()):
                     target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
