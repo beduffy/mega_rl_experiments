@@ -407,10 +407,13 @@ if __name__ == "__main__":
                       help='Path to trained policy weights')
     parser.add_argument('--output', type=str, default=None,
                       help='Output filename for recording')
+    parser.add_argument('--render-mode', type=str, default='human',
+                      choices=[None, 'human'],
+                      help='Render mode for environment visualization')
     
     args = parser.parse_args()
     
-    env = ServoEnv()
+    env = ServoEnv(render_mode=args.render_mode)
     
     # Set output filename if not specified
     if args.output is None:
