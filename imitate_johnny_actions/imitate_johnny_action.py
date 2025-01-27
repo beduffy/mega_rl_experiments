@@ -10,43 +10,28 @@ from torch.utils.data import Dataset, DataLoader
 from collections import OrderedDict
 
 
-class SimplePolicy(nn.Module):
-    """Neural network that maps camera observations to full 24-DoF joint angles.
-    
-    Input shapes:
-        images: (batch_size, 3, 240, 240) - RGB images normalized to [0,1]
-        qpos: (batch_size, 24) - Current joint positions (optional)
-        
-    Output shape:
-        predictions: (batch_size, 24) - Predicted joint angles for all 24 DoF
-    """
-    def __init__(self, image_size=240, use_qpos=True, qpos_dim=24):
+class SequencePolicy(nn.Module):
+    """Predicts N future action steps from current observation"""
+    def __init__(self, image_size=240, use_qpos=True, qpos_dim=24, pred_steps=3):
         super().__init__()
-        # Calculate conv output size
-        def conv2d_output_size(size, kernel_size=3, stride=2):
-            return ((size - kernel_size) // stride) + 1
-        
-        size1 = conv2d_output_size(image_size)  # 119
-        size2 = conv2d_output_size(size1)       # 59
-        flat_size = 32 * size2 * size2  # 32 channels * 59 * 59
-
-        # CNN processes images: (batch_size, 3, 240, 240) -> (batch_size, flat_size)
+        # Keep existing CNN backbone
         self.conv = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=2),  # (batch_size, 16, 119, 119)
+            nn.Conv2d(3, 16, 3, stride=2),
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2), # (batch_size, 32, 59, 59)
+            nn.Conv2d(16, 32, 3, stride=2),
             nn.ReLU(),
-            nn.Flatten(),  # (batch_size, 32 * 59 * 59)
+            nn.Flatten(),
         )
-
-        # Expanded MLP for 24-DoF output
-        combined_input_size = flat_size + qpos_dim
+        
+        # Expanded MLP for multi-step prediction
+        self.pred_steps = pred_steps
+        combined_dim = 32*59*59 + qpos_dim
         self.mlp = nn.Sequential(
-            nn.Linear(combined_input_size, 512),
+            nn.Linear(combined_dim, 512),
             nn.ReLU(),
             nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Linear(256, 24)  # Output all 24 joint angles
+            nn.Linear(256, 24 * pred_steps)  # Output 24 * pred_steps joint angles
         )
         
         self.use_qpos = use_qpos
@@ -62,7 +47,8 @@ class SimplePolicy(nn.Module):
         x = self.conv(images)
         if self.use_qpos and qpos is not None:
             x = torch.cat([x, qpos], dim=1)
-        return self.mlp(x)
+        # Reshape output to (batch_size, pred_steps, 24)
+        return self.mlp(x).view(-1, self.pred_steps, 24)
 
 
 # Define joint order matching the URDF structure
@@ -114,7 +100,10 @@ class ServoDataset(Dataset):
             self.targets.append(torch.stack(self.action_sequences[seq_idx][start:start+window_size]))
         
     def dict_to_tensor(self, action_dict):
-        return torch.tensor([action_dict[name] for name in JOINT_ORDER], dtype=torch.float32)
+        return torch.tensor([
+            action_dict.get(name, 0.0)  # Use 0.0 as default for missing joints
+            for name in JOINT_ORDER
+        ], dtype=torch.float32)
     
     def __len__(self):
         return len(self.images)
@@ -142,8 +131,8 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             # Predict sequence: (B, T, 24)
             preds = policy(images, qpos)
             
-            # Calculate loss across all timesteps
-            loss = criterion(preds, targets)
+            # Reshape targets if needed and calculate loss
+            loss = criterion(preds, targets)  # Now both are (B, T, 24)
             
             # Backprop
             optimizer.zero_grad()
@@ -163,20 +152,22 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         
         # Print diagnostics
         avg_loss = total_loss / len(train_loader)
-        print(f'Epoch {epoch}: Loss: {avg_loss:.4f}')
+        print(f'Epoch {epoch}: Loss: {avg_loss:.14f}')
         
         # Print sample predictions
         with torch.no_grad():
             sample_img, sample_qpos, sample_target = next(iter(train_loader))
             sample_pred = policy(sample_img[:1].to(device), sample_qpos[:1].to(device))
             
-            print("\nSample prediction vs target (first timestep):")
+            print("\nSample prediction vs target (first and last timesteps):")
             for j in range(5):  # First 5 joints
                 name = JOINT_ORDER[j]
-                pred_val = sample_pred[0,0,j].item()
-                target_val = sample_target[0,0,j].item()
-                print(f"  {name:15}: {pred_val:.3f} vs {target_val:.3f}")
-                
+                pred_first = sample_pred[0,0,j].item()
+                target_first = sample_target[0,0,j].item()
+                pred_last = sample_pred[0,-1,j].item()
+                target_last = sample_target[0,-1,j].item()
+                print(f"  {name:15}: First: {pred_first:.5f} vs {target_first:.5f}, Last: {pred_last:.5f} vs {target_last:.5f}")
+
         # Update best model
         if avg_loss < best_loss:
             best_loss = avg_loss
@@ -208,7 +199,7 @@ def main():
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     
     # Create and train policy
-    policy = SimplePolicy(image_size=240, use_qpos=True, qpos_dim=24).to(device)
+    policy = SequencePolicy(image_size=240, use_qpos=True, qpos_dim=24, pred_steps=3).to(device)
     train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device)
     
     # Save trained policy with timestamp and epochs
