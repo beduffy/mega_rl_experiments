@@ -83,44 +83,54 @@ GREET_ANGLES = torch.tensor([
     -1.9896753133333334, 0.0, 0.0, -1.8011797573333335, 0.0  # Left arm
 ], dtype=torch.float32)
 
+all_greet_action_lines = [
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.25663704, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.25663704, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.88495556, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.25663704, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.88495556, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.25663704, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -1.9896753133333334, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': 0.0, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.25663704, 'l_gripper': 0.0, 'r_gripper': 0.0},
+    {'l_ank_roll': 0.0, 'r_ank_roll': 0.0, 'l_ank_pitch': 0.5864306186666667, 'r_ank_pitch': -0.5864306186666667, 'l_knee': 1.0890854346666667, 'r_knee': -1.0890854346666667, 'l_hip_pitch': -0.7120943226666667, 'r_hip_pitch': 0.7120943226666667, 'l_hip_roll': 0.0, 'r_hip_roll': 0.0, 'l_hip_yaw': 0.0, 'r_hip_yaw': 0.0, 'l_sho_pitch': 0.16755160533333335, 'r_sho_pitch': -0.16755160533333335, 'l_sho_roll': 1.3823007440000001, 'r_sho_roll': -1.3823007440000001, 'l_el_pitch': 0.0, 'r_el_pitch': 0.0, 'l_el_yaw': -1.8011797573333335, 'r_el_yaw': 1.8011797573333335, 'l_gripper': 0.0, 'r_gripper': 0.0}
+]
+
+# Modified dataset class for sequence prediction
 class ServoDataset(Dataset):
-    """Synthetic dataset for testing greet motion"""
-    def __init__(self, num_samples=1000, image_size=240):
-        # Generate random "images" (normalized to [0,1])
+    """Dataset for sequence prediction with sliding window"""
+    def __init__(self, action_sequences, num_samples=1000, window_size=3, image_size=240):
+        # Convert each sequence from list of dicts to list of tensors
+        self.action_sequences = [
+            [self.dict_to_tensor(step) for step in seq] 
+            for seq in action_sequences
+        ]
+        self.window_size = window_size
         self.images = torch.rand(num_samples, 3, image_size, image_size)
-        # Use greet angles for all samples
-        self.actions = GREET_ANGLES.repeat(num_samples, 1)
         
+        # Create sequence targets
+        self.targets = []
+        for _ in range(num_samples):
+            seq_idx = np.random.randint(0, len(action_sequences))
+            start = np.random.randint(0, len(action_sequences[seq_idx]) - window_size)
+            self.targets.append(torch.stack(self.action_sequences[seq_idx][start:start+window_size]))
+        
+    def dict_to_tensor(self, action_dict):
+        return torch.tensor([action_dict[name] for name in JOINT_ORDER], dtype=torch.float32)
+    
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        return self.images[idx], torch.zeros(24), self.actions[idx]  # Empty qpos
+        return self.images[idx], torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
 
 
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
-    """Updated training function for 24-DoF control"""
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
     criterion = nn.MSELoss()
-    
-    # Get samples for visualization
-    samples = []
-    for batch in train_loader:
-        if len(samples) < 10:
-            img, qpos, target = batch
-            samples.append((img[0], qpos[0], target[0]))
-        else:
-            break
-    
-    # Create checkpoint directory if it doesn't exist
-    os.makedirs('checkpoints', exist_ok=True)
+    best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
-    # Store best loss and corresponding weights
-    best_loss = float('inf')
-    best_weights = None
-    
     for epoch in range(num_epochs):
+        policy.train()
         total_loss = 0
         joint_errors = {name: 0.0 for name in JOINT_ORDER}
         
@@ -129,66 +139,48 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             qpos = qpos.to(device)
             targets = targets.to(device)
             
-            outputs = policy(images, qpos)
-            loss = criterion(outputs, targets)
+            # Predict sequence: (B, T, 24)
+            preds = policy(images, qpos)
             
-            # Calculate per-joint errors
-            with torch.no_grad():
-                errors = torch.abs(outputs - targets).mean(dim=0)
-                for i, name in enumerate(JOINT_ORDER):
-                    joint_errors[name] += errors[i].item()
+            # Calculate loss across all timesteps
+            loss = criterion(preds, targets)
             
+            # Backprop
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             
-            total_loss += loss.item()
+            # Calculate per-joint errors
+            with torch.no_grad():
+                errors = torch.abs(preds - targets).mean(dim=(0,1))  # Average over batch and time
+                for i, name in enumerate(JOINT_ORDER):
+                    joint_errors[name] += errors[i].item()
         
-        # Print detailed joint errors
-        avg_joint_errors = {k: v/len(train_loader) for k,v in joint_errors.items()}
-        print(f'\nEpoch {epoch} Average Errors:')
-        for joint, error in avg_joint_errors.items():
-            print(f'  {joint:15}: {error:.4f}')
+        # Save checkpoint every 10 epochs
+        if epoch % 10 == 0:
+            ckpt_path = f'checkpoints/policy_epoch{epoch}_{timestamp}.pth'
+            torch.save(policy.state_dict(), ckpt_path)
         
-        # Update best weights
-        epoch_loss = total_loss/len(train_loader)
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
-            best_weights = policy.state_dict().copy()
+        # Print diagnostics
+        avg_loss = total_loss / len(train_loader)
+        print(f'Epoch {epoch}: Loss: {avg_loss:.4f}')
         
-        # Update sample predictions display
+        # Print sample predictions
         with torch.no_grad():
-            print(f'Epoch {epoch}: Loss: {total_loss/len(train_loader):.4f}')
-            sample_pred = outputs[0].cpu().numpy()
-            sample_target = targets[0].cpu().numpy()
-            print(f"  Sample pred: {np.round(sample_pred, 3)}")
-            print(f"  Target:      {np.round(sample_target, 3)}")
-        
-        # Show predictions on sample sequence
-        with torch.no_grad():
-            print(f'\nEpoch {epoch}:')
-            print(f'  Average Loss: {total_loss/len(train_loader):.8f}')
-            print("  Sample predictions vs targets (in radians):")
+            sample_img, sample_qpos, sample_target = next(iter(train_loader))
+            sample_pred = policy(sample_img[:1].to(device), sample_qpos[:1].to(device))
             
-            # Get first sample predictions
-            img, qpos, target = samples[0]
-            img = img.unsqueeze(0).to(device)
-            qpos = qpos.unsqueeze(0).to(device)
-            pred = policy(img, qpos).squeeze().cpu().numpy()
-            target_np = target.cpu().numpy()
-            
-            # Print first 5 joints for brevity
-            for i in range(5):
-                name = JOINT_ORDER[i]
-                print(f"    {name:15}: {pred[i]:.3f} vs {target_np[i]:.3f}")
-            print("    ... (remaining joints omitted for space) ...")
-        
-        # Save checkpoint every 100 epochs
-        save_checkpoint_every_n_epochs = 10
-        if (epoch + 1) % save_checkpoint_every_n_epochs == 0:
-            checkpoint_path = f'checkpoints/servo_policy_{timestamp}_ep{epoch+1}.pth'
-            torch.save(policy.state_dict(), checkpoint_path)
-            print(f"Saved checkpoint to {checkpoint_path}")
+            print("\nSample prediction vs target (first timestep):")
+            for j in range(5):  # First 5 joints
+                name = JOINT_ORDER[j]
+                pred_val = sample_pred[0,0,j].item()
+                target_val = sample_target[0,0,j].item()
+                print(f"  {name:15}: {pred_val:.3f} vs {target_val:.3f}")
+                
+        # Update best model
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(policy.state_dict(), f'best_policy_{timestamp}.pth')
 
 
 def main():
@@ -211,7 +203,8 @@ def main():
     print(f"Training on {device}")
     
     # Create synthetic dataset
-    dataset = ServoDataset(num_samples=1000)
+    greet_sequences = [all_greet_action_lines]  # Can add more sequences
+    dataset = ServoDataset(action_sequences=greet_sequences, num_samples=1000)
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     
     # Create and train policy
