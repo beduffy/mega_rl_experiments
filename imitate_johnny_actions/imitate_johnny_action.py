@@ -166,18 +166,26 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         
         # Show predictions on sample sequence
         with torch.no_grad():
-            print(f'Epoch {epoch}:')
-            print(f'  Average Loss: {total_loss/len(train_loader):.4f}')
+            print(f'\nEpoch {epoch}:')
+            print(f'  Average Loss: {total_loss/len(train_loader):.8f}')
             print("  Sample predictions vs targets (in radians):")
-            for i, (img, qpos, target) in enumerate(samples):
-                img = img.unsqueeze(0).to(device)
-                qpos = qpos.unsqueeze(0).to(device)
-                pred = policy(img, qpos).item()
-                print(f"    t{i}: {pred:.3f} vs {target.item():.3f}")
-            print()
+            
+            # Get first sample predictions
+            img, qpos, target = samples[0]
+            img = img.unsqueeze(0).to(device)
+            qpos = qpos.unsqueeze(0).to(device)
+            pred = policy(img, qpos).squeeze().cpu().numpy()
+            target_np = target.cpu().numpy()
+            
+            # Print first 5 joints for brevity
+            for i in range(5):
+                name = JOINT_ORDER[i]
+                print(f"    {name:15}: {pred[i]:.3f} vs {target_np[i]:.3f}")
+            print("    ... (remaining joints omitted for space) ...")
         
         # Save checkpoint every 100 epochs
-        if (epoch + 1) % 100 == 0:
+        save_checkpoint_every_n_epochs = 10
+        if (epoch + 1) % save_checkpoint_every_n_epochs == 0:
             checkpoint_path = f'checkpoints/servo_policy_{timestamp}_ep{epoch+1}.pth'
             torch.save(policy.state_dict(), checkpoint_path)
             print(f"Saved checkpoint to {checkpoint_path}")
