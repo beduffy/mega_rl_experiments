@@ -8,12 +8,17 @@ import pybullet_data
 import numpy as np
 
 # from imitate_johnny_actions.imitate_johnny_action import SimplePolicy, JOINT_ORDER
-from imitate_johnny_action import SimplePolicy, JOINT_ORDER
+from imitate_johnny_action import SequencePolicy, JOINT_ORDER
 
 
 def load_policy(checkpoint_path, device='cpu'):
-    """Load trained policy from checkpoint"""
-    policy = SimplePolicy(image_size=240, use_qpos=True, qpos_dim=24)
+    """Load trained sequence policy from checkpoint"""
+    policy = SequencePolicy(
+        image_size=240,
+        use_qpos=True,
+        qpos_dim=24,
+        pred_steps=3  # Must match training configuration
+    )
     checkpoint = torch.load(checkpoint_path, map_location=device)
     policy.load_state_dict(checkpoint)
     policy.eval()
@@ -106,27 +111,39 @@ if __name__ == "__main__":
     urdf_path = "/home/ben/all_projects/ainex_private_ws/ainex_private/src/ainex_simulations/ainex_description/urdf/ainex.urdf"
     robot = p.loadURDF(urdf_path, [0, 0, 0.25], useFixedBase=use_fixed_base)  # Start above ground
 
-    # Modified simulation loop
-    last_time = time.time()
+    # Add action buffer for sequence prediction
+    pred_steps = 3
+    action_buffer = []
+    control_interval = 0.1  # Time between policy queries (seconds)
+    last_control_time = time.time()
+
     while True:
         current_time = time.time()
-        dt = current_time - last_time
-        last_time = current_time
-
-        # Get current observations
-        # image = get_camera_image(robot).to(args.device)
-        image = torch.rand(1, 3, 240, 240).to(args.device)
+        
+        # Get observations
+        image = get_camera_image(robot).to(args.device)
         qpos = torch.zeros(1, 24).to(args.device)  # Replace with actual qpos if available
         
-        # Run policy
-        with torch.no_grad():
-            target_angles = policy(image, qpos).cpu().numpy()[0]
+        # Run policy at control interval
+        if current_time - last_control_time > control_interval or not action_buffer:
+            start_time = time.time()
+            with torch.no_grad():
+                target_sequence = policy(image, qpos).cpu().numpy()[0]
+            inference_time = time.time() - start_time
+            print(f"Policy inference took: {inference_time:.3f}s")
+            action_buffer = list(target_sequence)
+            last_control_time = current_time
+
+        # TODO see how slow CNN is. profile. Also check GPU and stuff or? 
+        # TODO how to pytorch AMD? 
         
-        # Convert policy output to joint dictionary
-        joint_targets = {name: target_angles[i] for i, name in enumerate(JOINT_ORDER)}
+        # Get current action from buffer
+        if action_buffer:
+            joint_targets = {name: action_buffer[0][i] for i, name in enumerate(JOINT_ORDER)}
+            action_buffer = action_buffer[1:]  # Move to next action in sequence
         
         # Apply to simulation
         set_joint_angles_instantly(robot, joint_targets)
         
         p.stepSimulation()
-        time.sleep(1./240.)  # Maintain physics timestep 
+        time.sleep(1./240.) 
