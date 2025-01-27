@@ -7,19 +7,20 @@ import h5py
 import argparse
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
+from collections import OrderedDict
 
 
 class SimplePolicy(nn.Module):
-    """Neural network that maps servo environment observations to actions.
+    """Neural network that maps camera observations to full 24-DoF joint angles.
     
     Input shapes:
         images: (batch_size, 3, 240, 240) - RGB images normalized to [0,1]
-        qpos: (batch_size, 2) - Servo state [current_angle, velocity]
+        qpos: (batch_size, 24) - Current joint positions (optional)
         
     Output shape:
-        predictions: (batch_size, 1) - Predicted target angle in radians
+        predictions: (batch_size, 24) - Predicted joint angles for all 24 DoF
     """
-    def __init__(self, image_size=240, use_qpos=True, qpos_dim=2):
+    def __init__(self, image_size=240, use_qpos=True, qpos_dim=24):
         super().__init__()
         # Calculate conv output size
         def conv2d_output_size(size, kernel_size=3, stride=2):
@@ -38,40 +39,44 @@ class SimplePolicy(nn.Module):
             nn.Flatten(),  # (batch_size, 32 * 59 * 59)
         )
 
-        # MLP combines flattened image features with qpos
+        # Expanded MLP for 24-DoF output
         combined_input_size = flat_size + qpos_dim
         self.mlp = nn.Sequential(
-            nn.Linear(combined_input_size, 128),
+            nn.Linear(combined_input_size, 512),
             nn.ReLU(),
-            nn.Linear(128, 1)  # Final output: predicted target angle
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 24)  # Output all 24 joint angles
         )
         
         self.use_qpos = use_qpos
+        self.joint_order = [
+            'r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll',
+            'l_hip_yaw', 'l_hip_roll', 'l_hip_pitch', 'l_knee', 'l_ank_pitch', 'l_ank_roll',
+            'head_pan', 'head_tilt',
+            'r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper',
+            'l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'
+        ]
     
     def forward(self, images, qpos=None):
         x = self.conv(images)
-        if self.use_qpos:
+        if self.use_qpos and qpos is not None:
             x = torch.cat([x, qpos], dim=1)
         return self.mlp(x)
 
 
 class ServoDataset(Dataset):
-    """Dataset for servo environment demonstrations.
-    
-    Data structure in HDF5 file:
-        /observations/
-            images/main: (num_frames, 240, 240, 3) - RGB images
-            qpos: (num_frames, 2) - Servo state [current_angle, velocity]
-        /action: (num_frames, 1) - Target angles in radians
-    """
+    """Dataset for full humanoid demonstrations."""
     def __init__(self, data_path):
         with h5py.File(data_path, 'r') as f:
             self.images = torch.from_numpy(f['/observations/images/main'][:]).float() / 255.0
             self.qpos = torch.from_numpy(f['/observations/qpos'][:]).float()
+            # Assuming actions now contain all 24 DoF
             self.actions = torch.from_numpy(f['/action'][:]).float()
             
-        # Rearrange image dimensions from (N,H,W,C) to (N,C,H,W) for PyTorch
         self.images = self.images.permute(0, 3, 1, 2)
+        # Ensure action dimension matches 24 DoF
+        assert self.actions.shape[1] == 24, "Actions must contain 24 values"
 
     def __len__(self):
         return len(self.images)
@@ -81,7 +86,7 @@ class ServoDataset(Dataset):
 
 
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
-    """Trains the policy network on servo demonstrations."""
+    """Updated training function for 24-DoF control"""
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
     criterion = nn.MSELoss()
     
@@ -106,13 +111,22 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             targets = targets.to(device)
             
             outputs = policy(images, qpos)
-            loss = criterion(outputs.squeeze(), targets.squeeze())
+            # Calculate loss across all 24 joints
+            loss = criterion(outputs, targets)
             
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             
             total_loss += loss.item()
+        
+        # Update sample predictions display
+        with torch.no_grad():
+            print(f'Epoch {epoch}: Loss: {total_loss/len(train_loader):.4f}')
+            sample_pred = outputs[0].cpu().numpy()
+            sample_target = targets[0].cpu().numpy()
+            print(f"  Sample pred: {np.round(sample_pred, 3)}")
+            print(f"  Target:      {np.round(sample_target, 3)}")
         
         # Show predictions on sample sequence
         with torch.no_grad():
@@ -135,8 +149,8 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_path', type=str, default='scripted_episode.hdf5',
-                      help='Path to demonstration data')
+    # parser.add_argument('--data_path', type=str, default='scripted_episode.hdf5',
+    #                   help='Path to demonstration data')
     parser.add_argument('--num_epochs', type=int, default=500,
                       help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32,
@@ -157,12 +171,12 @@ def main():
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     
     # Create and train policy
-    policy = SimplePolicy(image_size=240, use_qpos=True, qpos_dim=2).to(device)
+    policy = SimplePolicy(image_size=240, use_qpos=True, qpos_dim=24).to(device)
     train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device)
     
     # Save trained policy with timestamp and epochs
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    save_path = f'servo_policy_{timestamp}_ep{args.num_epochs}.pth'
+    save_path = f'servo_policy_24dof_{timestamp}_ep{args.num_epochs}.pth'
     torch.save(policy.state_dict(), save_path)
 
 
