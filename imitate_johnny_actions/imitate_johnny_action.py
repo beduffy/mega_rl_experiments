@@ -47,8 +47,8 @@ class SequencePolicy(nn.Module):
         x = self.conv(images)
         if self.use_qpos and qpos is not None:
             x = torch.cat([x, qpos], dim=1)
-        # Reshape output to (batch_size, pred_steps, 24)
-        return self.mlp(x).view(-1, self.pred_steps, 24)
+        output = self.mlp(x)
+        return output.view(-1, self.pred_steps, 24)  # Ensure correct reshaping
 
 
 # Define joint order matching the URDF structure
@@ -92,12 +92,14 @@ class ServoDataset(Dataset):
         self.window_size = window_size
         self.images = torch.rand(num_samples, 3, image_size, image_size)
         
-        # Create sequence targets
+        # Create sequence targets with proper windowing
         self.targets = []
         for _ in range(num_samples):
-            seq_idx = np.random.randint(0, len(action_sequences))
-            start = np.random.randint(0, len(action_sequences[seq_idx]) - window_size)
-            self.targets.append(torch.stack(self.action_sequences[seq_idx][start:start+window_size]))
+            seq_idx = np.random.randint(0, len(self.action_sequences))
+            seq = self.action_sequences[seq_idx]
+            start = np.random.randint(0, len(seq) - self.window_size + 1)
+            window = seq[start:start + self.window_size]
+            self.targets.append(torch.stack(window))
         
     def dict_to_tensor(self, action_dict):
         return torch.tensor([
@@ -120,7 +122,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     
     for epoch in range(num_epochs):
         policy.train()
-        total_loss = 0
+        total_loss = 0  # Reset each epoch
         joint_errors = {name: 0.0 for name in JOINT_ORDER}
         
         for batch_idx, (images, qpos, targets) in enumerate(train_loader):
@@ -131,13 +133,16 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             # Predict sequence: (B, T, 24)
             preds = policy(images, qpos)
             
-            # Reshape targets if needed and calculate loss
-            loss = criterion(preds, targets)  # Now both are (B, T, 24)
+            # Calculate loss
+            loss = criterion(preds, targets)
             
             # Backprop
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            
+            # Accumulate loss
+            total_loss += loss.item()
             
             # Calculate per-joint errors
             with torch.no_grad():
@@ -152,7 +157,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         
         # Print diagnostics
         avg_loss = total_loss / len(train_loader)
-        print(f'Epoch {epoch}: Loss: {avg_loss:.14f}')
+        print(f'Epoch {epoch}: Loss: {avg_loss:.6f}')  # Changed to .6f for decimal format
         
         # Print sample predictions
         with torch.no_grad():
@@ -166,7 +171,9 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 target_first = sample_target[0,0,j].item()
                 pred_last = sample_pred[0,-1,j].item()
                 target_last = sample_target[0,-1,j].item()
-                print(f"  {name:15}: First: {pred_first:.5f} vs {target_first:.5f}, Last: {pred_last:.5f} vs {target_last:.5f}")
+                error_first = abs(pred_first - target_first)
+                error_last = abs(pred_last - target_last)
+                print(f"  {name:15}: First: {pred_first:.5f} vs {target_first:.5f} (err: {error_first:.5f}), Last: {pred_last:.5f} vs {target_last:.5f} (err: {error_last:.5f})")
 
         # Update best model
         if avg_loss < best_loss:
