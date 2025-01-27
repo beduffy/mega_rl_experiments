@@ -65,24 +65,37 @@ class SimplePolicy(nn.Module):
         return self.mlp(x)
 
 
-class ServoDataset(Dataset):
-    """Dataset for full humanoid demonstrations."""
-    def __init__(self, data_path):
-        with h5py.File(data_path, 'r') as f:
-            self.images = torch.from_numpy(f['/observations/images/main'][:]).float() / 255.0
-            self.qpos = torch.from_numpy(f['/observations/qpos'][:]).float()
-            # Assuming actions now contain all 24 DoF
-            self.actions = torch.from_numpy(f['/action'][:]).float()
-            
-        self.images = self.images.permute(0, 3, 1, 2)
-        # Ensure action dimension matches 24 DoF
-        assert self.actions.shape[1] == 24, "Actions must contain 24 values"
+# Define joint order matching the URDF structure
+JOINT_ORDER = [
+    'r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll',
+    'l_hip_yaw', 'l_hip_roll', 'l_hip_pitch', 'l_knee', 'l_ank_pitch', 'l_ank_roll',
+    'head_pan', 'head_tilt',
+    'r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper',
+    'l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'
+]
 
+# Hardcoded demonstration data
+GREET_ANGLES = torch.tensor([
+    0.0, 0.0, 0.7120943226666667, -1.0890854346666667, -0.5864306186666667, 0.0,  # Right leg
+    0.0, 0.0, -0.7120943226666667, 1.0890854346666667, 0.5864306186666667, 0.0,   # Left leg
+    0.0, 0.0,  # Head
+    0.16755160533333335, 1.3823007440000001, 0.0, 1.25663704, 0.0,  # Right arm
+    -1.9896753133333334, 0.0, 0.0, -1.8011797573333335, 0.0  # Left arm
+], dtype=torch.float32)
+
+class ServoDataset(Dataset):
+    """Synthetic dataset for testing greet motion"""
+    def __init__(self, num_samples=1000, image_size=240):
+        # Generate random "images" (normalized to [0,1])
+        self.images = torch.rand(num_samples, 3, image_size, image_size)
+        # Use greet angles for all samples
+        self.actions = GREET_ANGLES.repeat(num_samples, 1)
+        
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        return self.images[idx], self.qpos[idx], self.actions[idx]
+        return self.images[idx], torch.zeros(24), self.actions[idx]  # Empty qpos
 
 
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
@@ -103,22 +116,45 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     os.makedirs('checkpoints', exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
+    # Store best loss and corresponding weights
+    best_loss = float('inf')
+    best_weights = None
+    
     for epoch in range(num_epochs):
         total_loss = 0
+        joint_errors = {name: 0.0 for name in JOINT_ORDER}
+        
         for batch_idx, (images, qpos, targets) in enumerate(train_loader):
             images = images.to(device)
             qpos = qpos.to(device)
             targets = targets.to(device)
             
             outputs = policy(images, qpos)
-            # Calculate loss across all 24 joints
             loss = criterion(outputs, targets)
+            
+            # Calculate per-joint errors
+            with torch.no_grad():
+                errors = torch.abs(outputs - targets).mean(dim=0)
+                for i, name in enumerate(JOINT_ORDER):
+                    joint_errors[name] += errors[i].item()
             
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             
             total_loss += loss.item()
+        
+        # Print detailed joint errors
+        avg_joint_errors = {k: v/len(train_loader) for k,v in joint_errors.items()}
+        print(f'\nEpoch {epoch} Average Errors:')
+        for joint, error in avg_joint_errors.items():
+            print(f'  {joint:15}: {error:.4f}')
+        
+        # Update best weights
+        epoch_loss = total_loss/len(train_loader)
+        if epoch_loss < best_loss:
+            best_loss = epoch_loss
+            best_weights = policy.state_dict().copy()
         
         # Update sample predictions display
         with torch.no_grad():
@@ -149,8 +185,8 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
 
 def main():
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--data_path', type=str, default='scripted_episode.hdf5',
-    #                   help='Path to demonstration data')
+    parser.add_argument('--data_path', type=str, default='',  # Keep argument but don't use it
+                      help='Not used, preserved for compatibility')
     parser.add_argument('--num_epochs', type=int, default=500,
                       help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32,
@@ -166,8 +202,8 @@ def main():
     device = torch.device(args.device)
     print(f"Training on {device}")
     
-    # Load demonstration data
-    dataset = ServoDataset(args.data_path)
+    # Create synthetic dataset
+    dataset = ServoDataset(num_samples=1000)
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     
     # Create and train policy
