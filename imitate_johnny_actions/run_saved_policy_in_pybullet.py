@@ -7,7 +7,6 @@ import pybullet as p
 import pybullet_data
 import numpy as np
 
-
 # from imitate_johnny_actions.imitate_johnny_action import SimplePolicy, JOINT_ORDER
 from imitate_johnny_action import SimplePolicy, JOINT_ORDER
 
@@ -77,6 +76,7 @@ def set_joint_angles_instantly(robot, angle_dict_to_try):
         if joint_name in angle_dict_to_try and joint_type in [p.JOINT_REVOLUTE] and joint_name not in ['head_tilt', 'head_pan']:
             p.setJointMotorControl2(robot, joint_idx, 
                                 controlMode=p.POSITION_CONTROL,
+                                positionGain=0.01,
                                 targetPosition=angle_dict_to_try[joint_name],  # Radians for revolute, meters for prismatic
                                 force=100)  # Maximum force in Newtons
 
@@ -102,8 +102,9 @@ if __name__ == "__main__":
 
     # Load robot URDF
     use_fixed_base = False
-    use_fixed_base = True
-    robot = p.loadURDF("/home/ben/all_projects/ainex_private_ws/ainex_private/src/ainex_simulations/ainex_description/urdf/ainex.urdf", [0, 0, 0.25], useFixedBase=use_fixed_base)  # Start above ground
+    # use_fixed_base = True
+    urdf_path = "/home/ben/all_projects/ainex_private_ws/ainex_private/src/ainex_simulations/ainex_description/urdf/ainex.urdf"
+    robot = p.loadURDF(urdf_path, [0, 0, 0.25], useFixedBase=use_fixed_base)  # Start above ground
 
     # Modified simulation loop
     last_time = time.time()
@@ -113,7 +114,8 @@ if __name__ == "__main__":
         last_time = current_time
 
         # Get current observations
-        image = get_camera_image(robot).to(args.device)
+        # image = get_camera_image(robot).to(args.device)
+        image = torch.rand(1, 3, 240, 240).to(args.device)
         qpos = torch.zeros(1, 24).to(args.device)  # Replace with actual qpos if available
         
         # Run policy
