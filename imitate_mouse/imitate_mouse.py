@@ -72,24 +72,32 @@ class MousePolicy(nn.Module):
     def __init__(self):
         super().__init__()
         self.cnn = nn.Sequential(
-            nn.Conv2d(9, 16, 3, stride=2),  # Input channels: 3 frames * 3 channels
+            nn.Conv2d(9, 32, 3, stride=2),  # Increased channels
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 32, 3, stride=2),
+            nn.Conv2d(32, 64, 3, stride=2),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
+            nn.AdaptiveAvgPool2d((7, 7)),  # Spatial pyramid
             nn.Flatten(),
-            nn.Linear(32*59*59, 256),
+            nn.Linear(64*7*7, 512),
+            nn.Dropout(0.5),
             nn.ReLU(),
-            nn.Linear(256, 2)
+            nn.Linear(512, 2),
+            nn.Sigmoid()  # Output normalized coordinates
         )
         
     def forward(self, x):
         return self.cnn(x)
 
+
 class MouseDataset(Dataset):
-    def __init__(self, recordings, image_size=240):
-        # Convert list of frame sequences to tensor [N, T, H, W, C]
+    def __init__(self, recordings, image_size=240, screen_size=(1920, 1080)):
         self.images = torch.from_numpy(np.array(recordings['images'])).float() / 255.0
+        # Normalize positions to [0,1] range
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
+        self.positions[:, 0] /= screen_size[0]  # Normalize X
+        self.positions[:, 1] /= screen_size[1]  # Normalize Y
         
     def __len__(self):
         return len(self.images)
@@ -101,6 +109,7 @@ class MouseDataset(Dataset):
         merged = frames.permute(0, 3, 1, 2)  # [T, C, H, W]
         merged = merged.reshape(-1, merged.shape[2], merged.shape[3])  # [T*C, H, W]
         return merged, self.positions[idx]
+
 
 def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
     # Load recorded data
@@ -115,11 +124,17 @@ def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
     
     # Initialize model and training
     policy = MousePolicy()
-    optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
     criterion = nn.MSELoss()
+    
+    # Get sample batch for diagnostics
+    sample_images, sample_targets = next(iter(loader))
     
     for epoch in range(num_epochs):
         total_loss = 0
+        policy.train()
+        
         for images, targets in loader:
             optimizer.zero_grad()
             outputs = policy(images)
@@ -128,11 +143,28 @@ def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
             optimizer.step()
             total_loss += loss.item()
             
-        print(f"Epoch {epoch} Loss: {total_loss/len(loader):.4f}")
-    
+        # Print diagnostics
+        avg_loss = total_loss/len(loader)
+        print(f"\nEpoch {epoch} Loss: {avg_loss:.4f}")
+        
+        with torch.no_grad():
+            policy.eval()
+            preds = policy(sample_images[:5])  # First 5 samples
+            print("Sample Predictions vs Targets:")
+            for i, (pred, target) in enumerate(zip(preds, sample_targets[:5])):
+                pred_x, pred_y = pred.tolist()
+                target_x, target_y = target.tolist()
+                print(f"  Sample {i}:")
+                print(f"    X: {pred_x:7.10f} (pred) vs {target_x:7.10f} (target)")
+                print(f"    Y: {pred_y:7.10f} (pred) vs {target_y:7.10f} (target)")
+                print(f"    Total Error: {((pred_x-target_x)**2 + (pred_y-target_y)**2)**0.5:.10f}px")
+        
+        scheduler.step(avg_loss)  # Update learning rate
+
     # Save trained model
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     torch.save(policy.state_dict(), f"mouse_policy_{timestamp}.pth")
+
 
 def run_policy(policy_path):
     """Run trained policy to generate mouse movements"""
@@ -141,39 +173,45 @@ def run_policy(policy_path):
     policy.eval()
     
     recorder = MouseRecorder()
+    recorder.start_recording() 
     
     try:
         while True:
-            # Capture screen
             recorder.capture_frame()
+            print('got frame')
             if len(recorder.history) < recorder.history.maxlen:
+                print('not enough frames')
                 continue
                 
-            # Prepare input tensor
-            current_frame = np.stack(recorder.history)
+            # Prepare input tensor matching training format
+            current_frame = np.stack(recorder.history)  # [T, H, W, C]
             input_tensor = torch.from_numpy(current_frame).float()/255.0
-            input_tensor = input_tensor.permute(2, 0, 1).unsqueeze(0)
+            input_tensor = input_tensor.permute(0, 3, 1, 2)  # [T, C, H, W]
+            input_tensor = input_tensor.reshape(-1, input_tensor.shape[2], input_tensor.shape[3])  # [T*C, H, W]
+            input_tensor = input_tensor.unsqueeze(0)  # Add batch dimension
             
-            # Get prediction
+            # Get prediction and denormalize
             with torch.no_grad():
-                pred = policy(input_tensor)[0].numpy()
-                
-            # Move mouse
-            pyautogui.moveTo(pred[0], pred[1], duration=0.01)
-            time.sleep(0.01)
+                pred_normalized = policy(input_tensor)[0].numpy()
+            pred_x = int(pred_normalized[0] * 1920)
+            pred_y = int(pred_normalized[1] * 1080)
+            
+            print(f'Moving to ({pred_x}, {pred_y})')
+            pyautogui.moveTo(pred_x, pred_y, duration=0.01)
             
     except KeyboardInterrupt:
         print("Stopping policy execution")
 
+
 if __name__ == "__main__":
-    # To record demonstration:
-    demo_data = circular_mouse_controller(duration=60)
-    with h5py.File('mouse_demo.hdf5', 'w') as f:
-        f.create_dataset('images', data=demo_data['images'])
-        f.create_dataset('positions', data=demo_data['positions'])
+    # # To record demonstration:
+    # demo_data = circular_mouse_controller(duration=60)
+    # with h5py.File('mouse_demo.hdf5', 'w') as f:
+    #     f.create_dataset('images', data=demo_data['images'])
+    #     f.create_dataset('positions', data=demo_data['positions'])
     
     # To train:
-    train_mouse_policy(num_epochs=50)
+    # train_mouse_policy(num_epochs=50)
     
     # To run (use latest policy):
-    # run_policy("mouse_policy_20240315_123456.pth")
+    run_policy("mouse_policy_20250128_102830.pth")
