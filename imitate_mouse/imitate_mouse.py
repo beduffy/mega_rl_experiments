@@ -72,14 +72,14 @@ class MousePolicy(nn.Module):
     def __init__(self):
         super().__init__()
         self.cnn = nn.Sequential(
-            nn.Conv2d(3, 16, 3, stride=2),  # (240,240) -> (119,119)
+            nn.Conv2d(9, 16, 3, stride=2),  # Input channels: 3 frames * 3 channels
             nn.ReLU(),
-            nn.Conv2d(16, 32, 3, stride=2), # (119,119) -> (59,59)
+            nn.Conv2d(16, 32, 3, stride=2),
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(32*59*59, 256),
             nn.ReLU(),
-            nn.Linear(256, 2)  # Output x,y coordinates
+            nn.Linear(256, 2)
         )
         
     def forward(self, x):
@@ -87,15 +87,20 @@ class MousePolicy(nn.Module):
 
 class MouseDataset(Dataset):
     def __init__(self, recordings, image_size=240):
-        self.images = torch.stack([torch.from_numpy(x).float()/255.0 
-                                 for x in recordings['images']])
+        # Convert list of frame sequences to tensor [N, T, H, W, C]
+        self.images = torch.from_numpy(np.array(recordings['images'])).float() / 255.0
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
         
     def __len__(self):
         return len(self.images)
     
     def __getitem__(self, idx):
-        return self.images[idx].permute(2, 0, 1), self.positions[idx]
+        # Get sequence of frames [T, H, W, C]
+        frames = self.images[idx]
+        # Merge temporal and channel dimensions [T*C, H, W]
+        merged = frames.permute(0, 3, 1, 2)  # [T, C, H, W]
+        merged = merged.reshape(-1, merged.shape[2], merged.shape[3])  # [T*C, H, W]
+        return merged, self.positions[idx]
 
 def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
     # Load recorded data
