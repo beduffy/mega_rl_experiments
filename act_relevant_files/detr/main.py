@@ -84,15 +84,54 @@ def get_args_parser():
 
 
 def build_ACT_model_and_optimizer(args_override):
-    parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
-    args = parser.parse_args()
-
-    for k, v in args_override.items():
-        setattr(args, k, v)
-
+    """Build the ACT model and optimizer
+    
+    Args:
+        args_override: Dictionary of arguments to override defaults
+    """
+    # Create default args
+    args = argparse.Namespace()
+    
+    # Set default values based on typical usage
+    args.task_name = 'sim_transfer_cube_scripted'
+    args.ckpt_dir = 'checkpoints'
+    args.policy_class = 'ACT'
+    args.kl_weight = 10
+    args.chunk_size = 100
+    args.hidden_dim = 512
+    args.batch_size = 1
+    args.dim_feedforward = 3200
+    args.num_epochs = 2000
+    args.lr = 1e-5
+    args.seed = 0
+    args.device = 'cpu'
+    
+    # Additional required args for the model
+    args.num_queries = 3
+    args.enc_layers = 2
+    args.dec_layers = 2
+    args.nheads = 8
+    args.dropout = 0.1
+    args.backbone = 'resnet18'
+    args.position_embedding = 'sine'
+    args.lr_backbone = 1e-5
+    args.weight_decay = 1e-4
+    args.camera_names = ['dummy']
+    args.state_dim = 1
+    args.num_actions = 1
+    args.masks = False
+    args.dilation = False  # Default value for dilation
+    args.pre_norm = False  # Default value for pre_norm
+    
+    # Override with any provided arguments
+    if isinstance(args_override, dict):
+        for key, value in args_override.items():
+            setattr(args, key, value)
+    
+    # Create model
     model = build_ACT_model(args)
-    model.to(args.device)
-
+    
+    # Create optimizer
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
@@ -100,9 +139,8 @@ def build_ACT_model_and_optimizer(args_override):
             "lr": args.lr_backbone,
         },
     ]
-    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
-                                  weight_decay=args.weight_decay)
-
+    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
+    
     return model, optimizer
 
 

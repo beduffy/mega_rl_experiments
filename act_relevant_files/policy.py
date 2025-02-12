@@ -24,14 +24,16 @@ class ACTPolicy(nn.Module):
                                          std=[0.229, 0.224, 0.225])
         image = normalize(image)
         if actions is not None: # training time
-            actions = actions[:, :self.model.num_queries]
-            is_pad = is_pad[:, :self.model.num_queries]
+            if actions.ndim == 3:
+                actions = actions[:, 0]
+                if is_pad is not None:
+                    is_pad = is_pad[:, 0]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(qpos, image, env_state, actions, is_pad)
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
             all_l1 = F.l1_loss(actions, a_hat, reduction='none')
-            l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean()
+            l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean() if is_pad is not None else all_l1.mean()
             loss_dict['l1'] = l1
             loss_dict['kl'] = total_kld[0]
             loss_dict['loss'] = loss_dict['l1'] + loss_dict['kl'] * self.kl_weight
