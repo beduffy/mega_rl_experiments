@@ -1,14 +1,23 @@
 import os
 import time
+import sys
+from datetime import datetime
+from collections import deque
+
 import numpy as np
 import torch
 import cv2
 import pyautogui
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
-from collections import deque
 import h5py
-from datetime import datetime
+
+path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+print(path_to_root)
+sys.path.append(path_to_root)
+from act_relevant_files.policy import ACTPolicy
+from act_relevant_files.utils import load_data, normalize_data, compute_dict_mean
+
 
 class MouseRecorder:
     """Records mouse movements and screen content"""
@@ -67,140 +76,125 @@ def circular_mouse_controller(radius=300, speed=2, duration=10):
         recorder.stop_recording()
         return recorder.data
 
-class MousePolicy(nn.Module):
-    """CNN that predicts mouse position from screen content"""
-    def __init__(self):
-        super().__init__()
-        self.cnn = nn.Sequential(
-            nn.Conv2d(9, 32, 3, stride=2),  # Increased channels
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 3, stride=2),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((7, 7)),  # Spatial pyramid
-            nn.Flatten(),
-            nn.Linear(64*7*7, 512),
-            nn.Dropout(0.5),
-            nn.ReLU(),
-            nn.Linear(512, 2),
-            nn.Sigmoid()  # Output normalized coordinates
-        )
-        
-    def forward(self, x):
-        return self.cnn(x)
-
-
-class MouseDataset(Dataset):
+class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=240, screen_size=(1920, 1080)):
         self.images = torch.from_numpy(np.array(recordings['images'])).float() / 255.0
-        # Normalize positions to [0,1] range
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
         self.positions[:, 0] /= screen_size[0]  # Normalize X
         self.positions[:, 1] /= screen_size[1]  # Normalize Y
+        
+        # Add dummy qpos (14 dim like robot state)
+        self.qpos = torch.zeros((len(recordings['positions']), 14))  
         
     def __len__(self):
         return len(self.images)
     
     def __getitem__(self, idx):
-        # Get sequence of frames [T, H, W, C]
         frames = self.images[idx]
-        # Merge temporal and channel dimensions [T*C, H, W]
         merged = frames.permute(0, 3, 1, 2)  # [T, C, H, W]
-        merged = merged.reshape(-1, merged.shape[2], merged.shape[3])  # [T*C, H, W]
-        return merged, self.positions[idx]
+        return merged, self.qpos[idx], self.positions[idx], torch.zeros(1)  # image, qpos, action, is_pad
 
 
 def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
-    # Load recorded data
     with h5py.File(data_path, 'r') as f:
-        recordings = {
-            'images': f['images'][:],
-            'positions': f['positions'][:]
-        }
+        recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
     
-    dataset = MouseDataset(recordings)
-    loader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataset = MouseACTDataset(recordings)
+    loader = DataLoader(dataset, batch_size=8, shuffle=True)
     
-    # Initialize model and training
-    policy = MousePolicy()
-    optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
-    criterion = nn.MSELoss()
+    # ACT policy config
+    policy_config = {
+        'lr': 1e-5,
+        'num_queries': 5,  # Predict 5 steps ahead
+        'kl_weight': 10,
+        'hidden_dim': 512,
+        'dim_feedforward': 3200,
+        'lr_backbone': 1e-5,
+        'backbone': 'resnet18',
+        'enc_layers': 4,
+        'dec_layers': 7,
+        'nheads': 8,
+        'camera_names': ['mouse_cam'],
+    }
     
-    # Get sample batch for diagnostics
-    sample_images, sample_targets = next(iter(loader))
+    policy = ACTPolicy(policy_config)
+    optimizer = policy.configure_optimizers()
     
+    # Training loop adapted from imitate_episodes.py
+    best_loss = float('inf')
     for epoch in range(num_epochs):
-        total_loss = 0
         policy.train()
+        total_loss = 0
         
-        for images, targets in loader:
+        for images, qpos, actions, is_pad in loader:
+            images = images.cuda()
+            qpos = qpos.cuda()
+            actions = actions.cuda()
+            is_pad = is_pad.cuda()
+            
+            # Forward pass
+            loss_dict = policy(qpos, images, actions, is_pad)
+            loss = loss_dict['loss']
+            
+            # Backward pass
             optimizer.zero_grad()
-            outputs = policy(images)
-            loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
             
-        # Print diagnostics
-        avg_loss = total_loss/len(loader)
-        print(f"\nEpoch {epoch} Loss: {avg_loss:.4f}")
+            total_loss += loss.item()
         
-        with torch.no_grad():
-            policy.eval()
-            preds = policy(sample_images[:5])  # First 5 samples
-            print("Sample Predictions vs Targets:")
-            for i, (pred, target) in enumerate(zip(preds, sample_targets[:5])):
-                pred_x, pred_y = pred.tolist()
-                target_x, target_y = target.tolist()
-                print(f"  Sample {i}:")
-                print(f"    X: {pred_x:7.10f} (pred) vs {target_x:7.10f} (target)")
-                print(f"    Y: {pred_y:7.10f} (pred) vs {target_y:7.10f} (target)")
-                print(f"    Total Error: {((pred_x-target_x)**2 + (pred_y-target_y)**2)**0.5:.10f}px")
+        avg_loss = total_loss / len(loader)
+        print(f'Epoch {epoch} Loss: {avg_loss:.4f}')
         
-        scheduler.step(avg_loss)  # Update learning rate
-
-    # Save trained model
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    torch.save(policy.state_dict(), f"mouse_policy_{timestamp}.pth")
+        # Save best checkpoint
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(policy.state_dict(), f"mouse_act_policy_best.ckpt")
 
 
 def run_policy(policy_path):
-    """Run trained policy to generate mouse movements"""
-    policy = MousePolicy()
+    policy = ACTPolicy({
+        'num_queries': 5,
+        'hidden_dim': 512,
+        'dim_feedforward': 3200,
+        'lr_backbone': 1e-5,
+        'backbone': 'resnet18',
+        'enc_layers': 4,
+        'dec_layers': 7,
+        'nheads': 8,
+        'camera_names': ['mouse_cam'],
+        'kl_weight': 10
+    })
     policy.load_state_dict(torch.load(policy_path))
-    policy.eval()
+    policy.cuda().eval()
     
     recorder = MouseRecorder()
-    recorder.start_recording() 
+    recorder.start_recording()
     
     try:
         while True:
             recorder.capture_frame()
-            print('got frame')
             if len(recorder.history) < recorder.history.maxlen:
-                print('not enough frames')
                 continue
                 
-            # Prepare input tensor matching training format
-            current_frame = np.stack(recorder.history)  # [T, H, W, C]
+            current_frame = np.stack(recorder.history)
             input_tensor = torch.from_numpy(current_frame).float()/255.0
-            input_tensor = input_tensor.permute(0, 3, 1, 2)  # [T, C, H, W]
-            input_tensor = input_tensor.reshape(-1, input_tensor.shape[2], input_tensor.shape[3])  # [T*C, H, W]
-            input_tensor = input_tensor.unsqueeze(0)  # Add batch dimension
+            input_tensor = input_tensor.permute(0, 3, 1, 2).cuda()  # [T, C, H, W]
             
-            # Get prediction and denormalize
+            # Generate dummy qpos
+            qpos = torch.zeros(14).cuda()
+            
+            # ACT inference
             with torch.no_grad():
-                pred_normalized = policy(input_tensor)[0].numpy()
+                action = policy(qpos, input_tensor.unsqueeze(0))
+                pred_normalized = action[0,0].cpu().numpy()  # Take first predicted action
+                
             pred_x = int(pred_normalized[0] * 1920)
             pred_y = int(pred_normalized[1] * 1080)
-            
-            print(f'Moving to ({pred_x}, {pred_y})')
             pyautogui.moveTo(pred_x, pred_y, duration=0.01)
             
     except KeyboardInterrupt:
-        print("Stopping policy execution")
+        recorder.stop_recording()
 
 
 if __name__ == "__main__":
@@ -214,4 +208,4 @@ if __name__ == "__main__":
     # train_mouse_policy(num_epochs=50)
     
     # To run (use latest policy):
-    run_policy("mouse_policy_20250128_102830.pth")
+    run_policy("mouse_act_policy_best.ckpt")
