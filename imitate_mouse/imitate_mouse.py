@@ -115,6 +115,8 @@ def train_mouse_policy(args_dict, device='cuda'):
         'enc_layers': 4,
         'dec_layers': 7,
         'nheads': 8,
+        'num_actions': 2,
+        'state_dim': 2,
         'camera_names': ['mouse_cam'],
     }
     

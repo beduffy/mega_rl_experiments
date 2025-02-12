@@ -33,7 +33,7 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 class DETRVAE(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names):
+    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, num_actions):
         """ Initializes the model.
         Parameters:
             backbones: torch module of the backbone to be used. See backbone.py
@@ -49,10 +49,13 @@ class DETRVAE(nn.Module):
         self.transformer = transformer
         self.encoder = encoder
 
-
         # new
-        self.num_actions = 1
-        self.num_actions = 14  # original
+        # TODO argparse should decide this
+        # self.num_actions = 1
+        # self.num_actions = 14  # original
+        # self.num_actions = 2  # original
+        self.num_actions = num_actions  # Get from config
+
 
         hidden_dim = transformer.d_model
         self.action_head = nn.Linear(hidden_dim, state_dim)
@@ -233,9 +236,10 @@ def build_encoder(args):
 
 
 def build(args):
-    state_dim = 14 # TODO hardcode
+    state_dim = args.state_dim  # Get from config
     # state_dim = 5 # TODO hardcode
     # state_dim = 1 # TODO hardcode
+    # state_dim = 2
 
     # From state
     # backbone = None # from state for now, no need for conv nets
@@ -255,12 +259,14 @@ def build(args):
         state_dim=state_dim,
         num_queries=args.num_queries,
         camera_names=args.camera_names,
+        num_actions=args.num_actions,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("number of parameters: %.2fM" % (n_parameters/1e6,))
 
     return model
+
 
 def build_cnnmlp(args):
     state_dim = 14 # TODO hardcode

@@ -123,7 +123,8 @@ if __name__ == "__main__":
         # Get observations
         image = get_camera_image(robot).to(args.device)
         qpos = torch.zeros(1, 24).to(args.device)  # Replace with actual qpos if available
-        
+        # TODO should the above change or not? what happened during training?
+
         # Run policy at control interval
         if current_time - last_control_time > control_interval or not action_buffer:
             start_time = time.time()
