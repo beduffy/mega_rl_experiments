@@ -84,8 +84,8 @@ class MouseACTDataset(Dataset):
         self.positions[:, 0] /= screen_size[0]  # Normalize X
         self.positions[:, 1] /= screen_size[1]  # Normalize Y
         
-        # Add dummy qpos (14 dim like robot state)
-        self.qpos = torch.zeros((len(recordings['positions']), 14))  
+        # Use normalized mouse positions as the qpos (2D state) instead of a 14-dim dummy.
+        self.qpos = self.positions.clone()
         
     def __len__(self):
         return len(self.images)
@@ -93,7 +93,7 @@ class MouseACTDataset(Dataset):
     def __getitem__(self, idx):
         frames = self.images[idx]
         merged = frames.permute(0, 3, 1, 2)  # [T, C, H, W]
-        return merged, self.qpos[idx], self.positions[idx], torch.zeros(1)  # image, qpos, action, is_pad
+        return merged, self.qpos[idx], self.positions[idx], torch.zeros(1, dtype=torch.bool)  # image, qpos, action, is_pad
 
 
 def train_mouse_policy(args_dict, device='cuda'):
@@ -132,6 +132,10 @@ def train_mouse_policy(args_dict, device='cuda'):
         for images, qpos, actions, is_pad in loader:
             images = images.to(device)
             qpos = qpos.to(device)
+
+            # qpos = torch.zeros(1, 2).to(device)  # Add batch dimension (1,2)
+            # qpos = qpos.repeat(images.size(0), 1)  # Expand to match batch size
+            # actions = torch.stack([torch.tensor([x/1920, y/1080]) for x, y in actions])
             actions = actions.to(device)
             is_pad = is_pad.to(device)
             
