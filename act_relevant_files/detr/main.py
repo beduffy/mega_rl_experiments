@@ -73,6 +73,13 @@ def get_args_parser():
     parser.add_argument('--ckpt_dir', default='checkpoints', action='store', type=str, help='ckpt_dir')
     parser.add_argument('--policy_class', default='ACT', action='store', type=str, help='policy_class, capitalize')
 
+
+    # Device arguments
+    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu',
+                        type=str, choices=['cpu', 'cuda'],
+                        help="Device to use for training/evaluation")
+
+
     return parser
 
 
@@ -84,7 +91,7 @@ def build_ACT_model_and_optimizer(args_override):
         setattr(args, k, v)
 
     model = build_ACT_model(args)
-    model.cuda()
+    model.to(args.device)
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -107,7 +114,7 @@ def build_CNNMLP_model_and_optimizer(args_override):
         setattr(args, k, v)
 
     model = build_CNNMLP_model(args)
-    model.cuda()
+    model.to(args.device)
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},

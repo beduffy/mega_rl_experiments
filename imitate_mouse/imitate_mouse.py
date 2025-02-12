@@ -11,6 +11,7 @@ import pyautogui
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 import h5py
+import argparse
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
@@ -95,8 +96,8 @@ class MouseACTDataset(Dataset):
         return merged, self.qpos[idx], self.positions[idx], torch.zeros(1)  # image, qpos, action, is_pad
 
 
-def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
-    with h5py.File(data_path, 'r') as f:
+def train_mouse_policy(args_dict, device='cuda'):
+    with h5py.File('mouse_demo.hdf5', 'r') as f:
         recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
     
     dataset = MouseACTDataset(recordings)
@@ -104,11 +105,11 @@ def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
     
     # ACT policy config
     policy_config = {
-        'lr': 1e-5,
-        'num_queries': 5,  # Predict 5 steps ahead
-        'kl_weight': 10,
-        'hidden_dim': 512,
-        'dim_feedforward': 3200,
+        'lr': args_dict['lr'],
+        'num_queries': args_dict['chunk_size'],
+        'kl_weight': args_dict['kl_weight'],
+        'hidden_dim': args_dict['hidden_dim'],
+        'dim_feedforward': args_dict['dim_feedforward'],
         'lr_backbone': 1e-5,
         'backbone': 'resnet18',
         'enc_layers': 4,
@@ -117,20 +118,20 @@ def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
         'camera_names': ['mouse_cam'],
     }
     
-    policy = ACTPolicy(policy_config)
+    policy = ACTPolicy(policy_config).to(device)
     optimizer = policy.configure_optimizers()
     
     # Training loop adapted from imitate_episodes.py
     best_loss = float('inf')
-    for epoch in range(num_epochs):
+    for epoch in range(args_dict['num_epochs']):
         policy.train()
         total_loss = 0
         
         for images, qpos, actions, is_pad in loader:
-            images = images.cuda()
-            qpos = qpos.cuda()
-            actions = actions.cuda()
-            is_pad = is_pad.cuda()
+            images = images.to(device)
+            qpos = qpos.to(device)
+            actions = actions.to(device)
+            is_pad = is_pad.to(device)
             
             # Forward pass
             loss_dict = policy(qpos, images, actions, is_pad)
@@ -152,7 +153,7 @@ def train_mouse_policy(data_path='mouse_demo.hdf5', num_epochs=50):
             torch.save(policy.state_dict(), f"mouse_act_policy_best.ckpt")
 
 
-def run_policy(policy_path):
+def run_policy(policy_path, device='cuda'):
     policy = ACTPolicy({
         'num_queries': 5,
         'hidden_dim': 512,
@@ -164,9 +165,9 @@ def run_policy(policy_path):
         'nheads': 8,
         'camera_names': ['mouse_cam'],
         'kl_weight': 10
-    })
+    }).to(device)
     policy.load_state_dict(torch.load(policy_path))
-    policy.cuda().eval()
+    policy.eval()
     
     recorder = MouseRecorder()
     recorder.start_recording()
@@ -179,10 +180,10 @@ def run_policy(policy_path):
                 
             current_frame = np.stack(recorder.history)
             input_tensor = torch.from_numpy(current_frame).float()/255.0
-            input_tensor = input_tensor.permute(0, 3, 1, 2).cuda()  # [T, C, H, W]
+            input_tensor = input_tensor.permute(0, 3, 1, 2).to(device)  # [T, C, H, W]
             
             # Generate dummy qpos
-            qpos = torch.zeros(14).cuda()
+            qpos = torch.zeros(14).to(device)
             
             # ACT inference
             with torch.no_grad():
@@ -198,14 +199,35 @@ def run_policy(policy_path):
 
 
 if __name__ == "__main__":
-    # # To record demonstration:
-    # demo_data = circular_mouse_controller(duration=60)
-    # with h5py.File('mouse_demo.hdf5', 'w') as f:
-    #     f.create_dataset('images', data=demo_data['images'])
-    #     f.create_dataset('positions', data=demo_data['positions'])
+    # Separate device arg first
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+                      choices=['cpu', 'cuda'], help='Device to run policy on')
+    args, remaining_args = parser.parse_known_args()
+    device = args.device
+
+    # Now parse ACT/DETR args separately
+    parser = argparse.ArgumentParser()
+    # Add ACT-specific args from imitate_episodes.py
+    parser.add_argument('--task_name', type=str, required=True, help='Task name')
+    parser.add_argument('--ckpt_dir', type=str, required=True, help='Checkpoint directory')
+    parser.add_argument('--policy_class', type=str, required=True, choices=['ACT', 'CNNMLP'], help='Policy class')
+    parser.add_argument('--kl_weight', type=int, required=True, help='KL weight')
+    parser.add_argument('--chunk_size', type=int, required=True, help='Chunk size')
+    parser.add_argument('--hidden_dim', type=int, required=True, help='Hidden dimension')
+    parser.add_argument('--batch_size', type=int, required=True, help='Batch size')
+    parser.add_argument('--dim_feedforward', type=int, required=True, help='Feedforward dimension')
+    parser.add_argument('--num_epochs', type=int, required=True, help='Number of epochs')
+    parser.add_argument('--lr', type=float, required=True, help='Learning rate')
+    parser.add_argument('--seed', type=int, required=True, help='Random seed')
+    args = parser.parse_args(remaining_args)
     
-    # To train:
-    # train_mouse_policy(num_epochs=50)
-    
-    # To run (use latest policy):
-    run_policy("mouse_act_policy_best.ckpt")
+    # Pass args to training
+    train_mouse_policy(
+        args_dict=vars(args),
+        device=device
+    )
+
+    """
+    python3 imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0
+    """
