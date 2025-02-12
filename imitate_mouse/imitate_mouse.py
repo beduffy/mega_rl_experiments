@@ -16,7 +16,7 @@ path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
 sys.path.append(path_to_root)
 from act_relevant_files.policy import ACTPolicy
-from act_relevant_files.utils import load_data, normalize_data, compute_dict_mean
+from act_relevant_files.utils import load_data, compute_dict_mean
 
 
 class MouseRecorder:
