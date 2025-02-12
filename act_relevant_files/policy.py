@@ -1,9 +1,12 @@
+import sys
+import os
 import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms as transforms
-
-from detr.main import build_ACT_model_and_optimizer, build_CNNMLP_model_and_optimizer
 import IPython
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from detr.main import build_ACT_model_and_optimizer, build_CNNMLP_model_and_optimizer
 e = IPython.embed
 
 class ACTPolicy(nn.Module):
