@@ -21,6 +21,11 @@ sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 # Instead of defining SequencePolicy, we use ACTPolicy
 from act_relevant_files.policy import ACTPolicy
 
+# Add denormalization (assuming you have mean/std):
+def denormalize(data):
+    return data * dataset.action_std + dataset.action_mean
+
+
 # Define joint order matching the URDF structure
 JOINT_ORDER = [
     'r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll',
@@ -108,9 +113,13 @@ class ServoDataset(Dataset):
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     scaler = torch.cuda.amp.GradScaler()  # Add mixed precision
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr, weight_decay=1e-5)
-    # Weighted loss for problematic joints
+    # More balanced weighting for problem joints
     loss_weights = torch.ones(24)
-    loss_weights[[JOINT_ORDER.index('r_el_yaw')]] = 2.0  # Double weight for problematic joint
+    loss_weights[[
+        JOINT_ORDER.index('r_hip_yaw'),
+        JOINT_ORDER.index('r_ank_pitch'), 
+        JOINT_ORDER.index('r_el_yaw')
+    ]] = 2.0
     criterion = nn.SmoothL1Loss(reduction='none')  # Remove weight parameter
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -140,8 +149,8 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             
             # For ACTPolicy, we assume the forward signature is (qpos, images)
             with torch.cuda.amp.autocast():
-                preds = policy(qpos, images)
-                loss = (criterion(preds, targets[:,0,:]) * loss_weights.to(device)).mean()  # Manual weighting
+                preds = policy(images, qpos)
+                loss = (criterion(preds, targets) * loss_weights.to(device)).mean()  # Compare full sequence
             
             optimizer.zero_grad()
             loss.backward()
@@ -152,7 +161,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             
             # Calculate per-joint errors
             with torch.no_grad():
-                errors = torch.abs(preds - targets[:,0,:]).mean(dim=0)  # Average over batch
+                errors = torch.abs(preds - targets).mean(dim=0)  # Average over batch
                 for i, name in enumerate(JOINT_ORDER):
                     joint_errors[name] += errors[i].item()
             
@@ -183,11 +192,10 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             avg_error = joint_errors[name] / len(train_loader)
             print(f"  {name:15}: {avg_error:.5f}")
 
-        # Log epoch metrics
+        # Log denormalized errors to WandB
         wandb.log({
             "epoch_loss": avg_loss,
-            "epoch_time": time.time() - epoch_start_time,
-            **{f"err_{name}": joint_errors[name]/len(train_loader) 
+            **{f"err_{name}": denormalize(torch.tensor(joint_errors[name]/len(train_loader))).item()
                for name in JOINT_ORDER[:5] + ['r_el_yaw', 'l_el_yaw']}
         })
 
@@ -199,19 +207,23 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 sample_img = sample_img.unsqueeze(1)
             if sample_img.shape[2] == 1:
                 sample_img = sample_img.repeat(1, 1, 3, 1, 1)
-            sample_pred = policy(sample_qpos[:1].to(device), sample_img[:1].to(device))
-
-            print("\nSample prediction vs target (first timestep):")
-            for j in range(5):  # First 5 joints
-                name = JOINT_ORDER[j]
-                pred_val = sample_pred[0,j].item()
-                target_val = sample_target[0,0,j].item()
-                error_val = abs(pred_val - target_val)
-                print(f"  {name:15}: Pred: {pred_val:.5f} vs Target: {target_val:.5f} (err: {error_val:.5f})")
+            sample_pred = preds[0,0,:].cpu()  # (24,)
+            sample_target = targets[0,0,:].cpu()
+            
+            # Denormalize before logging
+            sample_pred_denorm = denormalize(sample_pred)
+            sample_target_denorm = denormalize(sample_target)
+            
+            # Log denormalized values
+            print("\nSample prediction vs target (DENORMALIZED):")
+            for i, name in enumerate(JOINT_ORDER[:5] + ['r_el_yaw', 'l_el_yaw']):
+                pred_val = sample_pred_denorm[i].item()
+                target_val = sample_target_denorm[i].item()
+                print(f"  {name.ljust(12)}: Pred: {pred_val:.5f} vs Target: {target_val:.5f} (err: {abs(pred_val-target_val):.5f})")
 
             wandb.log({
-                "sample_prediction": wandb.Histogram(sample_pred.cpu().numpy()),
-                "sample_target": wandb.Histogram(sample_target[0,0,:].cpu().numpy())
+                "sample_prediction": wandb.Histogram(sample_pred.numpy()),
+                "sample_target": wandb.Histogram(sample_target.numpy())
             })
 
         # Update best model
