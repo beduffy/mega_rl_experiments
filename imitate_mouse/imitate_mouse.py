@@ -189,7 +189,7 @@ def train_mouse_policy(args_dict, device='cuda'):
         # Save best checkpoint
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(policy.state_dict(), f"mouse_act_policy_best.ckpt")
+            torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt'))
 
 
 def run_policy(policy_path, device='cuda'):
