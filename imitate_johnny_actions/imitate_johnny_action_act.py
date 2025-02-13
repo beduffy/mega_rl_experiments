@@ -8,6 +8,7 @@ import argparse
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from collections import OrderedDict
+from torchvision import transforms
 
 # Instead of defining SequencePolicy, we use ACTPolicy
 from act_relevant_files.policy import ACTPolicy
@@ -43,14 +44,15 @@ all_greet_action_lines = [
 # Modified dataset class for sequence prediction
 class ServoDataset(Dataset):
     """Dataset for sequence prediction with sliding window"""
-    def __init__(self, action_sequences, num_samples=1000, window_size=3, image_size=240):
+    def __init__(self, action_sequences, num_samples=1000, window_size=3, image_size=64,
+                 use_real_images=False):
         # Convert each sequence from list of dicts to list of tensors
         self.action_sequences = [
             [self.dict_to_tensor(step) for step in seq] 
             for seq in action_sequences
         ]
         self.window_size = window_size
-        self.images = torch.rand(num_samples, 3, image_size, image_size)
+        self.images = torch.rand(num_samples, 3, image_size, image_size) if use_real_images else torch.zeros(num_samples, 3, image_size, image_size)
         
         # Create sequence targets with proper windowing
         self.targets = []
@@ -60,6 +62,14 @@ class ServoDataset(Dataset):
             start = np.random.randint(0, len(seq) - self.window_size + 1)
             window = seq[start:start + self.window_size]
             self.targets.append(torch.stack(window))
+        
+        # Add data augmentation configuration
+        self.use_real_images = use_real_images
+        self.augment = transforms.Compose([
+            transforms.RandomApply([transforms.GaussianBlur(3)], p=0.5),
+            transforms.RandomAdjustSharpness(2, p=0.3),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2)
+        ])
         
     def dict_to_tensor(self, action_dict):
         return torch.tensor([
@@ -77,15 +87,28 @@ class ServoDataset(Dataset):
         idx:     0  1  2  3  4  5  6  7  8  9 ...
         target:  1  2  3  4  5  6  7  8  9  8 ...
         """
-        return self.images[idx], torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
+        image = self.images[idx]
+        
+        # Only apply augmentations if image isn't black or allowed explicitly
+        if not self.use_real_images and torch.all(image == 0):
+            pass  # Skip augmentation for black images
+        else:
+            image = self.augment(image)
+            
+        return image, torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
 
 
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
-    optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(policy.parameters(), lr=lr, weight_decay=1e-5)  # Added regularization
+    criterion = nn.SmoothL1Loss()  # Changed to more robust loss
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
+    # Add learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, 'min', patience=5, factor=0.5, verbose=True
+    )
+
     for epoch in range(num_epochs):
         policy.train()
         total_loss = 0  # Reset each epoch
@@ -123,10 +146,19 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             ckpt_path = f'checkpoints/policy_epoch{epoch}_{timestamp}.pth'
             torch.save(policy.state_dict(), ckpt_path)
         
-        # Print diagnostics
-        avg_loss = total_loss / len(train_loader)
-        print(f'Epoch {epoch}: Loss: {avg_loss:.6f}')
+        # Update learning rate
+        scheduler.step(total_loss / len(train_loader))
         
+        # Print diagnostics - modified to show problematic joints
+        avg_loss = total_loss / len(train_loader)
+        print(f'\nEpoch {epoch}: Loss: {avg_loss:.6f}')
+        
+        # Print per-joint errors
+        print("\nAverage Joint Errors:")
+        for name in JOINT_ORDER[:5] + ['r_el_yaw', 'l_el_yaw']:  # Focus on key problem joints
+            avg_error = joint_errors[name] / len(train_loader)
+            print(f"  {name:15}: {avg_error:.5f}")
+
         # Print sample predictions
         with torch.no_grad():
             sample_img, sample_qpos, sample_target = next(iter(train_loader))
@@ -164,6 +196,8 @@ def main():
     parser.add_argument('--device', type=str, default='cpu',
                       choices=['cpu', 'cuda'], 
                       help='Device to train on (cpu or cuda)')
+    parser.add_argument('--use_real_images', action='store_true',
+                      help='Use real images instead of black, enables augmentation')
     args = parser.parse_args()
     
     # Set device
@@ -172,7 +206,11 @@ def main():
     
     # Create synthetic dataset
     greet_sequences = [all_greet_action_lines]  # Can add more sequences
-    dataset = ServoDataset(action_sequences=greet_sequences, num_samples=1000)
+    dataset = ServoDataset(
+        action_sequences=greet_sequences,
+        num_samples=1000,
+        use_real_images=args.use_real_images  # Pass the flag
+    )
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     
     # Configure ACTPolicy to mimic the original SequencePolicy behavior
