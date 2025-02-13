@@ -110,16 +110,16 @@ class DETRVAE(nn.Module):
             
             # Concatenate along sequence dimension: expected shape (bs, 1 + 1 + seq_len_action, hidden_dim)
             encoder_input = torch.cat([cls_embed, qpos_embed, action_embed], axis=1)
-            print("DEBUG: encoder_input.shape =", encoder_input.shape)  # e.g. [bs, 3, hidden_dim]
+            # print("DEBUG: encoder_input.shape =", encoder_input.shape)  # e.g. [bs, 3, hidden_dim]
             encoder_input = encoder_input.permute(1, 0, 2)  # now shape -> (seq, bs, hidden_dim)
             seq_len = encoder_input.size(0)
-            print("DEBUG: seq_len =", seq_len)
+            # print("DEBUG: seq_len =", seq_len)
             
             # Adjust positional encoding's length to match seq_len
             pos_embed = self.pos_table.clone().detach()  # initially shape: (1, total_seq_len, hidden_dim)
             pos_embed = pos_embed[:, :seq_len, :]          # slice to match encoder input (1, seq, hidden_dim)
             pos_embed = pos_embed.permute(1, 0, 2)           # now: (seq, 1, hidden_dim)
-            print("DEBUG: pos_embed.shape =", pos_embed.shape)
+            # print("DEBUG: pos_embed.shape =", pos_embed.shape)
             
             # Do not mask CLS token.
             cls_joint_is_pad = torch.full((bs, 2), False).to(qpos.device)  # (bs, 2)
