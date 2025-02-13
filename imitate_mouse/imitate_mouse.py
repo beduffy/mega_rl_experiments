@@ -13,6 +13,7 @@ from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import wandb
+import matplotlib.pyplot as plt
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
@@ -145,9 +146,17 @@ def train_mouse_policy(args_dict, device='cuda'):
     if args_dict.get('use_dummy_images'):
         num_samples = 1000
         timesteps = 3
+        radius = 0.4  # Relative to screen size
+        
+        # Generate circular positions
+        angles = np.linspace(0, 2*np.pi, num_samples)
+        positions = np.zeros((num_samples, 2))
+        positions[:, 0] = 0.5 + radius * np.cos(angles)  # X coordinates
+        positions[:, 1] = 0.5 + radius * np.sin(angles)  # Y coordinates
+        
         recordings = {
             'images': np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8),
-            'positions': np.random.rand(num_samples, 2).astype(np.float32)
+            'positions': positions.astype(np.float32)
         }
     else:
         # Original loading code
@@ -290,6 +299,51 @@ def train_mouse_policy(args_dict, device='cuda'):
             "epoch_y_error": avg_y_error,
             "epoch_time": epoch_time
         })
+
+        # Collect all predictions and targets
+        all_targets = []
+        all_preds = []
+        with torch.no_grad():
+            for images, qpos, actions, _ in loader:
+                images = images.to(device)
+                qpos = qpos.to(device)
+                preds = policy(qpos, images).cpu().numpy()
+                all_targets.append(actions.numpy())
+                all_preds.append(preds)
+        
+        all_targets = np.concatenate(all_targets)
+        all_preds = np.concatenate(all_preds)
+        plot_positions(all_targets, all_preds, epoch)
+        wandb.log({"position_plot": wandb.Image(f'training_plots/epoch_{epoch:04d}.png')})
+
+
+def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
+    """Plot target vs predicted positions for the epoch"""
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111)
+    
+    # Convert normalized to screen coordinates
+    targs_denorm = targets * screen_size
+    preds_denorm = preds * screen_size
+    
+    # Plot with color indicating sequence progress
+    scatter = ax.scatter(targs_denorm[:,0], targs_denorm[:,1], 
+                        c=np.arange(len(targs_denorm)), cmap='viridis',
+                        alpha=0.3, label='Targets')
+    ax.scatter(preds_denorm[:,0], preds_denorm[:,1], 
+               c=np.arange(len(preds_denorm)), cmap='viridis',
+               marker='x', alpha=0.3, label='Predictions')
+    
+    ax.set_xlim(0, screen_size[0])
+    ax.set_ylim(0, screen_size[1])
+    ax.set_title(f'Epoch {epoch} - Mouse Positions')
+    ax.legend()
+    plt.colorbar(scatter, label='Sequence Progress')
+    
+    # Save without displaying
+    os.makedirs('training_plots', exist_ok=True)
+    plt.savefig(f'training_plots/epoch_{epoch:04d}.png')
+    plt.close()
 
 
 if __name__ == "__main__":
