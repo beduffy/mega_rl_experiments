@@ -6,3 +6,6 @@ args.txt
 
 wandb/*
 wandb*
+
+locomotion/logs/*
+locomotion/*.mp4
