@@ -11,6 +11,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from collections import OrderedDict
 from torchvision import transforms
+import wandb
 
 # Add parent directory to Python path (assuming act_relevant_files is in mega_rl_experiments/)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -154,6 +155,13 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 errors = torch.abs(preds - targets[:,0,:]).mean(dim=0)  # Average over batch
                 for i, name in enumerate(JOINT_ORDER):
                     joint_errors[name] += errors[i].item()
+            
+            # Log batch metrics
+            wandb.log({
+                "batch_loss": loss.item(),
+                "learning_rate": optimizer.param_groups[0]['lr'],
+                "epoch_progress": epoch + (batch_idx+1)/len(train_loader)
+            })
         
         # Save checkpoint every 10 epochs
         if epoch % 10 == 0:
@@ -175,7 +183,15 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             avg_error = joint_errors[name] / len(train_loader)
             print(f"  {name:15}: {avg_error:.5f}")
 
-        # Print sample predictions
+        # Log epoch metrics
+        wandb.log({
+            "epoch_loss": avg_loss,
+            "epoch_time": time.time() - epoch_start_time,
+            **{f"err_{name}": joint_errors[name]/len(train_loader) 
+               for name in JOINT_ORDER[:5] + ['r_el_yaw', 'l_el_yaw']}
+        })
+
+        # Log sample predictions
         with torch.no_grad():
             sample_img, sample_qpos, sample_target = next(iter(train_loader))
             # Ensure sample_img has correct shape [B, num_cam, C, H, W]
@@ -192,6 +208,11 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 target_val = sample_target[0,0,j].item()
                 error_val = abs(pred_val - target_val)
                 print(f"  {name:15}: Pred: {pred_val:.5f} vs Target: {target_val:.5f} (err: {error_val:.5f})")
+
+            wandb.log({
+                "sample_prediction": wandb.Histogram(sample_pred.cpu().numpy()),
+                "sample_target": wandb.Histogram(sample_target[0,0,:].cpu().numpy())
+            })
 
         # Update best model
         if avg_loss < best_loss:
@@ -223,6 +244,8 @@ def main():
                       help='Device to train on (cpu or cuda)')
     parser.add_argument('--use_real_images', action='store_true',
                       help='Use real images instead of black, enables augmentation')
+    parser.add_argument('--wandb_project', type=str, default='imitate_johnny_act',
+                      help='Weights & Biases project name')
     args = parser.parse_args()
     
     # Set device
@@ -259,6 +282,20 @@ def main():
     }
     
     policy = ACTPolicy(policy_config).to(device)
+    
+    # Initialize WandB
+    wandb.init(
+        project=args.wandb_project,
+        config={
+            "num_epochs": args.num_epochs,
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+            "hidden_dim": policy_config['hidden_dim'],
+            "dim_feedforward": policy_config['dim_feedforward'],
+            "window_size": dataset.window_size,
+            "use_real_images": args.use_real_images
+        }
+    )
     
     train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device)
     
