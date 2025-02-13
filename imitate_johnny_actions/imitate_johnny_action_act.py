@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from datetime import datetime
 
 import torch
@@ -114,7 +115,10 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         optimizer, 'min', patience=5, factor=0.5, verbose=True
     )
 
+    total_start_time = time.time()
+    
     for epoch in range(num_epochs):
+        epoch_start_time = time.time()
         policy.train()
         total_loss = 0  # Reset each epoch
         joint_errors = {name: 0.0 for name in JOINT_ORDER}
@@ -148,7 +152,9 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         
         # Save checkpoint every 10 epochs
         if epoch % 10 == 0:
-            ckpt_path = f'checkpoints/policy_epoch{epoch}_{timestamp}.pth'
+            if not os.path.exists('checkpoints'):
+                os.makedirs('checkpoints', exist_ok=True)  # Create directory if needed
+            ckpt_path = os.path.join('checkpoints', f'policy_epoch{epoch}_{timestamp}.pth')
             torch.save(policy.state_dict(), ckpt_path)
         
         # Update learning rate
@@ -186,6 +192,15 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(policy.state_dict(), f'best_policy_{timestamp}.pth')
+
+        epoch_time = time.time() - epoch_start_time
+        mins, secs = divmod(epoch_time, 60)
+        print(f'Epoch {epoch} took: {int(mins)}m {secs:.1f}s | Loss: {avg_loss:.7f}')
+    
+    total_time = time.time() - total_start_time
+    hours, rem = divmod(total_time, 3600)
+    mins, secs = divmod(rem, 60)
+    print(f'\nTotal training time: {int(hours):02d}h {int(mins):02d}m {secs:.1f}s')
 
 
 def main():
