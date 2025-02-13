@@ -20,11 +20,9 @@ from pybullet_look_at_object_env import LookAtObjectEnv
 from memory_debug import memory_tracker, profile
 
 
-
 # TODO surely LLMs could sit beside RL algorithms and give them lots of pointer on what to do and how to change things and then train everything by RL to be 1000000 more sample efficient?
 # TODO
-# FPS began at 60 and went to 15 fps and then eventually segmentation fault (core dumped). Memory leak or something? lets find and fix. @train_rl_look_at_object.py @camera_controller.py  
-
+# FPS began at 60 and went to 15 fps and then eventually segmentation fault (core dumped). Memory leak or something? lets find and fix. @train_rl_look_at_object.py @camera_controller.py
 
 
 # @profile
@@ -39,18 +37,17 @@ def make_env():
     return env
 
 
-
 @profile
 def train():
     """Train the PPO agent"""
     # Create environment
     env = make_env()
-    
+
     # Create unique run name with timestamp
     run_name = f"PPO_Camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     # 0-255 confirmed
-    # If you are using images as input, the observation must be of type np.uint8 
-    # and be contained in [0, 255]. By default, 
+    # If you are using images as input, the observation must be of type np.uint8
+    # and be contained in [0, 255]. By default,
     # the observation is normalized by SB3 pre-processing (dividing by 255 to have values in [0, 1]) when using CNN policies. Images can be either channel-first or channel-last.
     # If you want to use CnnPolicy or MultiInputPolicy with image-like observation (3D tensor) that are already normalized, you must pass normalize_images=False to the policy (using policy_kwargs parameter, policy_kwargs=dict(normalize_images=False)) and make sure your image is in the channel-first format.
 
@@ -71,8 +68,7 @@ def train():
         # Add policy network configuration
         policy_kwargs=dict(
             net_arch=dict(
-                pi=[64, 64],  # Policy network
-                vf=[64, 64]   # Value function network
+                pi=[64, 64], vf=[64, 64]  # Policy network  # Value function network
             )
         ),
         # Add these parameters
@@ -81,7 +77,6 @@ def train():
     )
     memory_tracker.log_memory("After model creation")
 
-    
     # Load the model and set its environment
     # model = PPO.load(
     #     "./ppo_camera_checkpoints/PPO_Camera_20241220_000145/camera_model_10000_steps",
@@ -97,36 +92,41 @@ def train():
             # self.episode_rewards = []
             # self.episode_lengths = []
             self.episode_step_counter = 0
-        
+
         def _on_step(self):
             self.episode_step_counter += 1
-            
-            if self.locals.get('done'):
+
+            if self.locals.get("done"):
                 # Log metrics directly without storing in lists
-                episode_reward = self.locals['rewards'][0]
+                episode_reward = self.locals["rewards"][0]
                 episode_length = self.episode_step_counter
-                self.logger.record('custom/episode_reward', episode_reward)
-                self.logger.record('custom/episode_length', episode_length)
-                if 'distance' in self.locals['infos'][0]:
-                    self.logger.record('env/target_distance', self.locals['infos'][0]['distance'])
+                self.logger.record("custom/episode_reward", episode_reward)
+                self.logger.record("custom/episode_length", episode_length)
+                if "distance" in self.locals["infos"][0]:
+                    self.logger.record(
+                        "env/target_distance", self.locals["infos"][0]["distance"]
+                    )
                 self.episode_step_counter = 0
-                
+
                 # Force garbage collection after each episode
                 import gc
+
                 gc.collect()
             return True
-    
+
     # Combine callbacks
-    callbacks = CallbackList([
-        CheckpointCallback(
-            save_freq=10000,
-            save_path=f"./ppo_camera_checkpoints/{run_name}/",
-            name_prefix="camera_model",
-            verbose=1
-        ),
-        # TensorboardCallback()
-    ])
-    
+    callbacks = CallbackList(
+        [
+            CheckpointCallback(
+                save_freq=10000,
+                save_path=f"./ppo_camera_checkpoints/{run_name}/",
+                name_prefix="camera_model",
+                verbose=1,
+            ),
+            # TensorboardCallback()
+        ]
+    )
+
     # Train the agent
     total_timesteps = 1_000_000
     # total_timesteps = 10_000
@@ -147,20 +147,20 @@ def train():
             total_timesteps=num_steps_per_learn,
             callback=callbacks,
             progress_bar=True,
-            reset_num_timesteps=False
+            reset_num_timesteps=False,
         )
         memory_tracker.log_memory(f"After {i+num_steps_per_learn} steps")
-        
+
         # Force garbage collection
         gc.collect()
         time.sleep(3)
         memory_tracker.log_memory(f"After gc.collect() steps")
-        
+
         # Log PyBullet stats
         if p.isConnected():
             print(f"PyBullet bodies: {p.getNumBodies()}")
             print(f"PyBullet constraints: {p.getNumConstraints()}")
-    
+
     # Save the final model
     model.save(f"./ppo_camera_checkpoints/{run_name}/final_model")
 
@@ -169,30 +169,30 @@ def evaluate(model_path: str, num_episodes: int = 10):
     """Evaluate a trained model"""
     env = make_env()
     model = PPO.load(model_path)
-    
+
     for episode in range(num_episodes):
         obs, info = env.reset()
         episode_reward = 0
         done = False
         truncated = False
-        
+
         while not (done or truncated):
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
-            
+
             p.stepSimulation()
-            time.sleep(1./240.)
-        
+            time.sleep(1.0 / 240.0)
+
         print(f"Episode {episode + 1}: Reward = {episode_reward}")
-    
+
     env.close()
 
 
 def profile_training():
     profiler = cProfile.Profile()
     profiler.enable()
-    
+
     try:
         train()  # Your existing train function
     finally:
@@ -210,6 +210,5 @@ if __name__ == "__main__":
     # print('output:', output)
 
     profile_training()
-
 
     # evaluate("ppo_camera_final")
