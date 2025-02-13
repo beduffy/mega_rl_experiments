@@ -107,13 +107,16 @@ class ServoDataset(Dataset):
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     scaler = torch.cuda.amp.GradScaler()  # Add mixed precision
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr, weight_decay=1e-5)
-    criterion = nn.SmoothL1Loss()  # Changed to more robust loss
+    # Weighted loss for problematic joints
+    loss_weights = torch.ones(24)
+    loss_weights[[JOINT_ORDER.index('r_el_yaw')]] = 2.0  # Double weight for problematic joint
+    criterion = nn.SmoothL1Loss(weight=loss_weights.to(device))
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     # Add learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 'min', patience=5, factor=0.5, verbose=True
+        optimizer, 'min', patience=3, factor=0.3, verbose=True
     )
 
     total_start_time = time.time()
@@ -140,10 +143,9 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 loss = criterion(preds, targets[:,0,:])
             
             optimizer.zero_grad()
-            scaler.scale(loss).backward()
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
             
             total_loss += loss.item()
             
@@ -212,7 +214,7 @@ def main():
                       help='Not used, preserved for compatibility')
     parser.add_argument('--num_epochs', type=int, default=500,
                       help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=128,
                       help='Training batch size')
     parser.add_argument('--lr', type=float, default=1e-4,
                       help='Learning rate')
@@ -231,8 +233,9 @@ def main():
     greet_sequences = [all_greet_action_lines]  # Can add more sequences
     dataset = ServoDataset(
         action_sequences=greet_sequences,
-        num_samples=1000,
-        use_real_images=args.use_real_images  # Pass the flag
+        num_samples=5000,
+        use_real_images=args.use_real_images,
+        window_size=5
     )
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     
