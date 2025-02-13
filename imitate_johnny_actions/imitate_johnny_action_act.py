@@ -111,7 +111,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     # Weighted loss for problematic joints
     loss_weights = torch.ones(24)
     loss_weights[[JOINT_ORDER.index('r_el_yaw')]] = 2.0  # Double weight for problematic joint
-    criterion = nn.SmoothL1Loss(weight=loss_weights.to(device))
+    criterion = nn.SmoothL1Loss(reduction='none')  # Remove weight parameter
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
@@ -141,7 +141,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             # For ACTPolicy, we assume the forward signature is (qpos, images)
             with torch.cuda.amp.autocast():
                 preds = policy(qpos, images)
-                loss = criterion(preds, targets[:,0,:])
+                loss = (criterion(preds, targets[:,0,:]) * loss_weights.to(device)).mean()  # Manual weighting
             
             optimizer.zero_grad()
             loss.backward()
