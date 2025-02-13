@@ -3,3 +3,6 @@
 *events.out*
 args.txt
 *.hdf5
+
+wandb/*
+wandb*
