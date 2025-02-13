@@ -105,7 +105,8 @@ class ServoDataset(Dataset):
 
 
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
-    optimizer = torch.optim.Adam(policy.parameters(), lr=lr, weight_decay=1e-5)  # Added regularization
+    scaler = torch.cuda.amp.GradScaler()  # Add mixed precision
+    optimizer = torch.optim.Adam(policy.parameters(), lr=lr, weight_decay=1e-5)
     criterion = nn.SmoothL1Loss()  # Changed to more robust loss
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -134,13 +135,15 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             targets = targets.to(device)
             
             # For ACTPolicy, we assume the forward signature is (qpos, images)
-            preds = policy(qpos, images)
-            # Since ACTPolicy predicts a single step (shape: [B, 24]), compare with the first timestep of target sequence
-            loss = criterion(preds, targets[:,0,:])
+            with torch.cuda.amp.autocast():
+                preds = policy(qpos, images)
+                loss = criterion(preds, targets[:,0,:])
             
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+            scaler.step(optimizer)
+            scaler.update()
             
             total_loss += loss.item()
             
@@ -191,7 +194,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         # Update best model
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(policy.state_dict(), f'best_policy_{timestamp}.pth')
+            torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), f'best_policy_{timestamp}.pth'))
 
         epoch_time = time.time() - epoch_start_time
         mins, secs = divmod(epoch_time, 60)
