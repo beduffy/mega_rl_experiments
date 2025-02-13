@@ -19,6 +19,9 @@ sys.path += [
     os.path.join(path_to_root, 'act_relevant_files', 'detr')
 ]
 
+# Add this line after existing path modifications
+sys.path.append(os.path.join(path_to_root, 'act_relevant_files'))
+
 # Import your model and helper functions
 from act_relevant_files.detr.models.detr_vae import DETRVAE
 from act_relevant_files.policy import ACTPolicy, kl_divergence
