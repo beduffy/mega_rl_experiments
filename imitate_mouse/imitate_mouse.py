@@ -12,6 +12,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 import h5py
 import argparse
+from torchvision import transforms
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
@@ -22,7 +23,7 @@ from act_relevant_files.utils import load_data, compute_dict_mean
 
 class MouseRecorder:
     """Records mouse movements and screen content"""
-    def __init__(self, screen_region=(0, 0, 1920, 1080), history_length=3):
+    def __init__(self, screen_region=(0, 0, 1920, 1080), history_length=3, use_dummy=False):
         self.screen_region = screen_region
         self.history = deque(maxlen=history_length)
         self.recording = False
@@ -31,6 +32,8 @@ class MouseRecorder:
             'positions': [],
             'timestamps': []
         }
+        self.use_dummy = use_dummy
+        self.dummy_size = (64, 64)  # Smaller dummy images
         
     def start_recording(self):
         self.recording = True
@@ -43,10 +46,14 @@ class MouseRecorder:
         if not self.recording:
             return
             
-        # Capture screen
-        img = pyautogui.screenshot(region=self.screen_region)
-        img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        img = cv2.resize(img, (240, 240))
+        if self.use_dummy:
+            # Generate tiny black dummy frame
+            img = np.zeros((*self.dummy_size, 3), dtype=np.uint8)
+        else:
+            # Original capture code
+            img = pyautogui.screenshot(region=self.screen_region)
+            img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            img = cv2.resize(img, (240, 240))
         
         # Store in history
         self.history.append(img)
@@ -57,9 +64,9 @@ class MouseRecorder:
             self.data['positions'].append(pyautogui.position())
             self.data['timestamps'].append(time.time())
 
-def circular_mouse_controller(radius=300, speed=2, duration=10):
+def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False):
     """Scripted mouse controller that moves in circles"""
-    recorder = MouseRecorder()
+    recorder = MouseRecorder(use_dummy=use_dummy)
     recorder.start_recording()
     
     start_time = time.time()
@@ -78,8 +85,12 @@ def circular_mouse_controller(radius=300, speed=2, duration=10):
         return recorder.data
 
 class MouseACTDataset(Dataset):
-    def __init__(self, recordings, image_size=240, screen_size=(1920, 1080)):
-        self.images = torch.from_numpy(np.array(recordings['images'])).float() / 255.0
+    def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
+        # Add resize transform for real images
+        self.resize = transforms.Resize(image_size) if image_size != 64 else lambda x: x
+        
+        # Process images
+        self.images = torch.stack([self.resize(torch.tensor(img).permute(0,3,1,2)) for img in recordings['images']]).float() / 255.0
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
         self.positions[:, 0] /= screen_size[0]  # Normalize X
         self.positions[:, 1] /= screen_size[1]  # Normalize Y
@@ -99,6 +110,12 @@ class MouseACTDataset(Dataset):
 def train_mouse_policy(args_dict, device='cuda'):
     with h5py.File(os.path.join(os.path.dirname(__file__), 'mouse_demo.hdf5'), 'r') as f:
         recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
+    
+    # Optional: Replace with black frames
+    if args_dict.get('use_dummy_images'):
+        # Tiny dummy data (batch_size x 3 x 64 x 64)
+        dummy_images = np.zeros((len(recordings['images']), 3, 64, 64), dtype=np.uint8)
+        recordings['images'] = dummy_images
     
     dataset = MouseACTDataset(recordings)
     loader = DataLoader(dataset, batch_size=8, shuffle=True)
@@ -131,6 +148,8 @@ def train_mouse_policy(args_dict, device='cuda'):
         total_x_error = 0.0
         total_y_error = 0.0
         
+        epoch_start = time.time()
+        
         for images, qpos, actions, is_pad in loader:
             images = images.to(device)
             qpos = qpos.to(device)
@@ -159,12 +178,14 @@ def train_mouse_policy(args_dict, device='cuda'):
             
             total_loss += loss.item()
         
-        # Print diagnostics with 2 decimal places
+        epoch_time = time.time() - epoch_start
+        
+        # Print diagnostics with 8 decimal places
         avg_loss = total_loss / len(loader)
         avg_x_error = total_x_error / len(dataset)
         avg_y_error = total_y_error / len(dataset)
-        print(f'\nEpoch {epoch} Loss: {avg_loss:.4f}')
-        print(f'X Error: {avg_x_error:.2f}px | Y Error: {avg_y_error:.2f}px')
+        print(f'\nEpoch {epoch} Loss: {avg_loss:.8f} (took {epoch_time:.2f}s)')
+        print(f'X Error: {avg_x_error:.8f}px | Y Error: {avg_y_error:.8f}px')
         
         # Print sample predictions
         with torch.no_grad():
@@ -182,59 +203,14 @@ def train_mouse_policy(args_dict, device='cuda'):
                 pred_x, pred_y = sample_pred[i].numpy()
                 target_x, target_y = sample_target[i].numpy()
                 print(f"  Sample {i}:")
-                print(f"    Predicted: ({pred_x:.1f}, {pred_y:.1f})")
-                print(f"    Target:    ({target_x:.1f}, {target_y:.1f})")
-                print(f"    Error:     ({abs(pred_x-target_x):.1f}, {abs(pred_y-target_y):.1f})px")
+                print(f"    Predicted: ({pred_x:.8f}, {pred_y:.8f})")
+                print(f"    Target:    ({target_x:.8f}, {target_y:.8f})")
+                print(f"    Error:     ({abs(pred_x-target_x):.8f}, {abs(pred_y-target_y):.8f})px")
 
         # Save best checkpoint
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt'))
-
-
-def run_policy(policy_path, device='cuda'):
-    policy = ACTPolicy({
-        'num_queries': 5,
-        'hidden_dim': 512,
-        'dim_feedforward': 3200,
-        'lr_backbone': 1e-5,
-        'backbone': 'resnet18',
-        'enc_layers': 4,
-        'dec_layers': 7,
-        'nheads': 8,
-        'camera_names': ['mouse_cam'],
-        'kl_weight': 10
-    }).to(device)
-    policy.load_state_dict(torch.load(policy_path))
-    policy.eval()
-    
-    recorder = MouseRecorder()
-    recorder.start_recording()
-    
-    try:
-        while True:
-            recorder.capture_frame()
-            if len(recorder.history) < recorder.history.maxlen:
-                continue
-                
-            current_frame = np.stack(recorder.history)
-            input_tensor = torch.from_numpy(current_frame).float()/255.0
-            input_tensor = input_tensor.permute(0, 3, 1, 2).to(device)  # [T, C, H, W]
-            
-            # Generate dummy qpos
-            qpos = torch.zeros(14).to(device)
-            
-            # ACT inference
-            with torch.no_grad():
-                action = policy(qpos, input_tensor.unsqueeze(0))
-                pred_normalized = action[0,0].cpu().numpy()  # Take first predicted action
-                
-            pred_x = int(pred_normalized[0] * 1920)
-            pred_y = int(pred_normalized[1] * 1080)
-            pyautogui.moveTo(pred_x, pred_y, duration=0.01)
-            
-    except KeyboardInterrupt:
-        recorder.stop_recording()
 
 
 if __name__ == "__main__":
@@ -259,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', type=int, required=True, help='Number of epochs')
     parser.add_argument('--lr', type=float, required=True, help='Learning rate')
     parser.add_argument('--seed', type=int, required=True, help='Random seed')
+    parser.add_argument('--use_dummy_images', action='store_true', help='Use dummy images for training')
     args = parser.parse_args(remaining_args)
     
     # Pass args to training
@@ -268,5 +245,5 @@ if __name__ == "__main__":
     )
 
     """
-    python3 imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0
+    python3 imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
     """
