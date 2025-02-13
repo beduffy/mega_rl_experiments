@@ -8,3 +8,4 @@ argparse>=1.4.0
 importlib>=1.0.4
 datetime>=4.3
 pytest>=6.2.5
+IPython>=8.0.0
