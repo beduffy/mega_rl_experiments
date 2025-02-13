@@ -599,5 +599,86 @@ def test_simple_policy_forward():
   assert output.shape == (1, 1)
 
 
+# Test: ACTPolicy forward pass as SequencePolicy (mimicking multi-step prediction)
+
+def test_actpolicy_forward_as_sequence_policy():
+  import torch
+  from act_relevant_files.policy import ACTPolicy
+
+  # Configure ACTPolicy with state_dim and num_actions = 24 and num_queries = 3
+  policy_config = {
+      'num_queries': 3,
+      'kl_weight': 1,
+      'task_name': 'dummy',
+      'device': 'cpu',
+      'num_actions': 24,
+      'state_dim': 24,
+      'hidden_dim': 512,
+      'dim_feedforward': 3200,
+      'lr_backbone': 1e-5,
+      'backbone': 'resnet18',
+      'enc_layers': 2,
+      'dec_layers': 2,
+      'nheads': 8,
+      'dropout': 0.1,
+      'camera_names': ['dummy'],
+  }
+  # Use mock build to create a dummy model
+  ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
+  policy = ACTPolicy(policy_config)
+
+  # Create dummy inputs
+  # qpos dimension matches state_dim = 24
+  qpos = torch.randn(1, 24)
+  # Dummy image shape: (batch, num_cam, C, H, W) = (1, 1, 3, 64, 64)
+  image = torch.randn(1, 1, 3, 64, 64)
+
+  # In inference, no actions are provided
+  a_hat = policy(qpos, image)
+  # Expect output shape (1, 24)
+  assert a_hat.shape == (1, 24)
+
+
+
+# Test: ACTPolicy forward pass as SimplePolicy (mimicking single-step prediction)
+
+def test_actpolicy_forward_as_simple_policy():
+  import torch
+  from act_relevant_files.policy import ACTPolicy
+
+  # Configure ACTPolicy with state_dim and num_actions = 1 and num_queries = 1
+  policy_config = {
+      'num_queries': 1,
+      'kl_weight': 1,
+      'task_name': 'dummy',
+      'device': 'cpu',
+      'num_actions': 1,
+      'state_dim': 1,
+      'hidden_dim': 512,
+      'dim_feedforward': 3200,
+      'lr_backbone': 1e-5,
+      'backbone': 'resnet18',
+      'enc_layers': 2,
+      'dec_layers': 2,
+      'nheads': 8,
+      'dropout': 0.1,
+      'camera_names': ['dummy'],
+  }
+  # Use mock build to create a dummy model
+  ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
+  policy = ACTPolicy(policy_config)
+
+  # Create dummy inputs
+  # qpos dimension matches state_dim = 1
+  qpos = torch.randn(1, 1)
+  # Dummy image shape: (1, 1, 3, 64, 64)
+  image = torch.randn(1, 1, 3, 64, 64)
+
+  # In inference, no actions are provided
+  a_hat = policy(qpos, image)
+  # Expect output shape (1, 1)
+  assert a_hat.shape == (1, 1)
+
+
 if __name__ == '__main__':
     pytest.main()
