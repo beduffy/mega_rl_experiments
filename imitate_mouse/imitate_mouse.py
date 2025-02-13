@@ -7,12 +7,10 @@ from collections import deque
 import numpy as np
 import torch
 import cv2
-import pyautogui
-from torch import nn
-from torch.utils.data import Dataset, DataLoader
 import h5py
 import argparse
 from torchvision import transforms
+from torch.utils.data import Dataset, DataLoader
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
@@ -52,6 +50,7 @@ class MouseRecorder:
             pos = self.dummy_pos
         else:
             try:
+                import pyautogui  # Moved import inside conditional
                 img = pyautogui.screenshot(region=self.screen_region)
                 pos = pyautogui.position()
             except Exception as e:
@@ -71,7 +70,7 @@ def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False)
     """Scripted mouse controller that moves in circles"""
     if not use_dummy:
         try:
-            import pyautogui  # Moved inside conditional
+            import pyautogui  # Ensure import stays inside conditional
             center_x, center_y = pyautogui.position()
             recorder = MouseRecorder(use_dummy=use_dummy)
             recorder.start_recording()
@@ -113,8 +112,7 @@ class MouseACTDataset(Dataset):
     
     def __getitem__(self, idx):
         frames = self.images[idx]
-        merged = frames.permute(0, 3, 1, 2)  # [T, C, H, W]
-        return merged, self.qpos[idx], self.positions[idx], torch.zeros(1, dtype=torch.bool)  # image, qpos, action, is_pad
+        return frames, self.qpos[idx], self.positions[idx], torch.zeros(1, dtype=torch.bool)
 
 
 def train_mouse_policy(args_dict, device='cuda'):
@@ -266,4 +264,5 @@ if __name__ == "__main__":
 
     """
     python3 imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
+    python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
     """
