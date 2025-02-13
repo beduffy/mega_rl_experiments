@@ -53,15 +53,16 @@ def run_policy_eval(args):
             input_tensor = input_tensor.permute(0, 3, 1, 2).to(device)  # [T, C, H, W]
             
             # Dummy qpos (matches training setup)
-            qpos = torch.zeros(2).to(device)  # Simplified from original 14-dim
+            qpos = torch.zeros(2).to(device).unsqueeze(0)  # Add batch dimension
             
             with torch.no_grad():
                 action = policy(qpos, input_tensor.unsqueeze(0))
-                pred_normalized = action[0,0].cpu().numpy()
+                pred_normalized = action[0].cpu().numpy()
                 
             pred_x = int(pred_normalized[0] * pyautogui.size().width)
             pred_y = int(pred_normalized[1] * pyautogui.size().height)
             pyautogui.moveTo(pred_x, pred_y, duration=0.01)
+            print(f"Moving mouse to ({pred_x}, {pred_y})")
             
             if args.dummy:
                 recorder.history.clear()  # Reset for next batch
