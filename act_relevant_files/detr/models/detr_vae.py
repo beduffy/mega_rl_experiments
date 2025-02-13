@@ -143,16 +143,16 @@ class DETRVAE(nn.Module):
             latent_sample = reparametrize(mu, logvar)
             
             # Add debug prints before projection
-            print(f"Input qpos device: {qpos.device}")
-            print(f"Image tensor device: {image.device}")
+            # print(f"Input qpos device: {qpos.device}")
+            # print(f"Image tensor device: {image.device}")
             
-            # Add buffer check
-            print(f"Positional table device: {self.pos_table.device}")
-            print(f"Encoder device: {next(self.encoder.parameters()).device}")
+            # # Add buffer check
+            # print(f"Positional table device: {self.pos_table.device}")
+            # print(f"Encoder device: {next(self.encoder.parameters()).device}")
             
-            # Existing projection debug
-            print(f"Latent sample device: {latent_sample.device}")
-            print(f"Projection weight device: {self.latent_out_proj.weight.device}")
+            # # Existing projection debug
+            # print(f"Latent sample device: {latent_sample.device}")
+            # print(f"Projection weight device: {self.latent_out_proj.weight.device}")
             latent_input = self.latent_out_proj(latent_sample)
         else:
             mu = logvar = None
@@ -164,7 +164,6 @@ class DETRVAE(nn.Module):
             all_cam_features = []
             all_cam_pos = []
             for cam_id, cam_name in enumerate(self.camera_names):
-                
                 features, pos = self.backbones[cam_id](image[:, cam_id])  # HARDCODED
                 features = features[0]  # take the last layer feature
                 pos = pos[0]

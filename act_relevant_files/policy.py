@@ -19,10 +19,10 @@ class ACTPolicy(nn.Module):
         self.model.to(args_override['device'])
         
         # Device verification for all parameters
-        print("\n=== Model Device Check ===")
-        for name, param in self.model.named_parameters():
-            print(f"{name}: {param.device}")
-        print("==========================\n")
+        # print("\n=== Model Device Check ===")
+        # for name, param in self.model.named_parameters():
+        #     print(f"{name}: {param.device}")
+        # print("==========================\n")
         self.optimizer = optimizer
         self.kl_weight = args_override['kl_weight']
         print(f'KL Weight {self.kl_weight}')
