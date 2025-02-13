@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import numpy as np
 import pytest
 import torchvision.transforms as transforms
+import importlib.util
 
 # Import your model and helper functions
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -510,6 +511,92 @@ def test_edge_case_inputs():
     
     with pytest.raises(Exception):
         _ = model(qpos_wrong, image, None, actions, is_pad)
+
+
+# Test: ACTPolicy forward pass on mouse data from imitate_mouse
+
+def test_actpolicy_forward_on_mouse_data():
+  import numpy as np
+  import torch
+  from imitate_mouse.imitate_mouse import MouseACTDataset
+  from act_relevant_files.policy import ACTPolicy
+
+  # Create dummy recordings with one sample
+  dummy_frame = np.random.randint(0, 255, (240, 240, 3), dtype=np.uint8)
+  dummy_stack = np.stack([dummy_frame, dummy_frame, dummy_frame], axis=0)  # shape (3, 240, 240, 3)
+  recordings = {"images": [dummy_stack], "positions": [(960, 540)]}
+
+  dataset = MouseACTDataset(recordings)
+  images, qpos, actions, is_pad = dataset[0]
+  # Add batch dimension
+  images = images.unsqueeze(0)
+  qpos = qpos.unsqueeze(0)
+
+  # Set up ACTPolicy with appropriate configuration for mouse data
+  policy_config = {
+      'num_queries': 1,
+      'kl_weight': 1,
+      'task_name': 'dummy',
+      'device': 'cpu',
+      'num_actions': 2,
+      'state_dim': 2,
+      'hidden_dim': 512,
+      'dim_feedforward': 3200,
+      'lr_backbone': 1e-5,
+      'backbone': 'resnet18',
+      'enc_layers': 2,
+      'dec_layers': 2,
+      'nheads': 8,
+      'dropout': 0.1,
+      'camera_names': ['dummy'],
+  }
+  # Use mock build to create a dummy model
+  ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
+  policy = ACTPolicy(policy_config)
+
+  # Perform forward pass in inference mode (no actions provided)
+  a_hat = policy(qpos, images)
+  # Expect output shape (1, state_dim) i.e. (1,2)
+  assert a_hat.shape == (1, 2)
+
+
+
+# Test: SequencePolicy forward pass from imitate_johnny_action
+
+def test_sequence_policy_forward():
+  import torch
+  from imitate_johnny_actions.imitate_johnny_action import SequencePolicy
+
+  dummy_image = torch.randn(1, 3, 240, 240)
+  dummy_qpos = torch.randn(1, 24)
+  model = SequencePolicy(image_size=240, use_qpos=True, qpos_dim=24, pred_steps=3)
+  output = model(dummy_image, dummy_qpos)
+  # Expect output shape (1, pred_steps, 24) -> (1, 3, 24)
+  assert output.shape == (1, 3, 24)
+
+
+
+# Test: SimplePolicy forward pass from simple_imitate (2d look at)
+
+def test_simple_policy_forward():
+  import torch
+  import os
+  import importlib.util
+  
+  # Dynamically load the simple_imitate module due to invalid module name
+  module_name = "simple_imitate"
+  file_path = os.path.join(os.path.dirname(__file__), "../2d_look_at/simple_imitate.py")
+  spec = importlib.util.spec_from_file_location(module_name, file_path)
+  simple_imitate = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(simple_imitate)
+  SimplePolicy = simple_imitate.SimplePolicy
+
+  dummy_image = torch.randn(1, 3, 240, 240)
+  dummy_qpos = torch.randn(1, 2)
+  model = SimplePolicy(image_size=240, use_qpos=True, qpos_dim=2)
+  output = model(dummy_image, dummy_qpos)
+  # Expect output shape (1, 1) as per the model's final linear layer
+  assert output.shape == (1, 1)
 
 
 if __name__ == '__main__':
