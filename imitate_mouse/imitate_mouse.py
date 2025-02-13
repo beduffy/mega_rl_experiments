@@ -12,6 +12,7 @@ import argparse
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+import wandb
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
@@ -123,6 +124,23 @@ class MouseACTDataset(Dataset):
 
 
 def train_mouse_policy(args_dict, device='cuda'):
+    # Initialize WandB with hyperparameters
+    wandb.init(
+        project="imitate_mouse",
+        config={
+            "policy_class": args_dict['policy_class'],
+            "kl_weight": args_dict['kl_weight'],
+            "chunk_size": args_dict['chunk_size'],
+            "hidden_dim": args_dict['hidden_dim'],
+            "batch_size": args_dict['batch_size'],
+            "dim_feedforward": args_dict['dim_feedforward'],
+            "num_epochs": args_dict['num_epochs'],
+            "lr": args_dict['lr'],
+            "seed": args_dict['seed'],
+            "use_dummy": args_dict.get('use_dummy_images', False)
+        }
+    )
+    
     # Generate complete dummy dataset if needed
     if args_dict.get('use_dummy_images'):
         num_samples = 1000
@@ -210,6 +228,24 @@ def train_mouse_policy(args_dict, device='cuda'):
                 'x_err': f'{x_error:.4f}',
                 'y_err': f'{y_error:.4f}'
             })
+            
+            # Enhanced logging
+            wandb.log({
+                "loss": loss.item(),
+                "x_error": x_error,
+                "y_error": y_error,
+                "learning_rate": optimizer.param_groups[0]['lr'],
+                "epoch": epoch + (batch_idx+1)/len(loader),  # Smooth epoch progress
+                "predictions": wandb.Histogram(pred_denorm.numpy()),
+                "targets": wandb.Histogram(target_denorm.numpy()),
+                "sample_prediction_x": pred_denorm[0,0].item(),
+                "sample_prediction_y": pred_denorm[0,1].item(),
+                "sample_target_x": target_denorm[0,0].item(),
+                "sample_target_y": target_denorm[0,1].item()
+            })
+
+            # Inside training loop once per epoch
+            # wandb.log({"sample_images": [wandb.Image(img) for img in images[0].cpu().numpy()]})
         
         epoch_time = time.time() - epoch_start
         
@@ -243,7 +279,17 @@ def train_mouse_policy(args_dict, device='cuda'):
         # Save best checkpoint
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt'))
+            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt')
+            os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+            torch.save(policy.state_dict(), checkpoint_path)
+
+        # Log epoch-level metrics
+        wandb.log({
+            "epoch_loss": avg_loss,
+            "epoch_x_error": avg_x_error,
+            "epoch_y_error": avg_y_error,
+            "epoch_time": epoch_time
+        })
 
 
 if __name__ == "__main__":
@@ -279,5 +325,5 @@ if __name__ == "__main__":
 
     """
     python3 imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
-    python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
+    python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images --device cuda
     """
