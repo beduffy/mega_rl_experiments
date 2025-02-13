@@ -18,7 +18,9 @@ def main():
     gs.init()
 
     log_dir = f"logs/{args.exp_name}"
-    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
+    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(
+        open(f"logs/{args.exp_name}/cfgs.pkl", "rb")
+    )
     reward_cfg["reward_scales"] = {}
 
     env = Go2Env(

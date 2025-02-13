@@ -11,6 +11,7 @@ import genesis as gs
 
 ##
 
+
 def get_train_cfg(exp_name, max_iterations):
 
     train_cfg_dict = {
@@ -125,7 +126,7 @@ def get_cfgs():
             "base_height": -50.0,
             "action_rate": -0.005,
             "similar_to_default": -0.1,
-            "top_right_leg_in_air": 1.0
+            "top_right_leg_in_air": 1.0,
         },
     }
     command_cfg = {
@@ -156,7 +157,11 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
 
     env = Go2Env(
-        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
+        num_envs=args.num_envs,
+        env_cfg=env_cfg,
+        obs_cfg=obs_cfg,
+        reward_cfg=reward_cfg,
+        command_cfg=command_cfg,
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
@@ -166,7 +171,9 @@ def main():
         open(f"{log_dir}/cfgs.pkl", "wb"),
     )
 
-    runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
+    runner.learn(
+        num_learning_iterations=args.max_iterations, init_at_random_ep_len=True
+    )
 
 
 if __name__ == "__main__":

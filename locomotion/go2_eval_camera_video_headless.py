@@ -19,7 +19,9 @@ def main():
     gs.init()
 
     log_dir = f"logs/{args.exp_name}"
-    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
+    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(
+        open(f"logs/{args.exp_name}/cfgs.pkl", "rb")
+    )
     reward_cfg["reward_scales"] = {}
 
     env = Go2Env(
@@ -58,17 +60,21 @@ def main():
 
             # change camera position
             env.cam.set_pose(
-                pos    = (3.0 * np.sin(frame_count / 60), 3.0 * np.cos(frame_count / 60), 2.5),
-                lookat = (0, 0, 0.5),
+                pos=(
+                    3.0 * np.sin(frame_count / 60),
+                    3.0 * np.cos(frame_count / 60),
+                    2.5,
+                ),
+                lookat=(0, 0, 0.5),
             )
-            
+
             env.cam.render()
 
             if frame_count > 500:
                 break
 
     # stop recording and save video. If `filename` is not specified, a name will be auto-generated using the caller file name.
-    env.cam.stop_recording(save_to_filename='{}.mp4'.format(args.exp_name), fps=60)
+    env.cam.stop_recording(save_to_filename="{}.mp4".format(args.exp_name), fps=60)
 
 
 if __name__ == "__main__":
