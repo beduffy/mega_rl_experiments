@@ -49,14 +49,13 @@ class MouseRecorder:
             
         if self.use_dummy:
             img = np.zeros((*self.dummy_size, 3), dtype=np.uint8)
-            pos = self.dummy_pos  # Use dummy position
+            pos = self.dummy_pos
         else:
-            # Wrap real pyautogui calls in try/except
             try:
                 img = pyautogui.screenshot(region=self.screen_region)
                 pos = pyautogui.position()
             except Exception as e:
-                print(f"PyAutoGUI failed: {str(e)}")
+                print(f"GUI access failed: {str(e)}")
                 return
 
         # Store in history
@@ -71,24 +70,27 @@ class MouseRecorder:
 def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False):
     """Scripted mouse controller that moves in circles"""
     if not use_dummy:
-        # Only run real mouse movements if not in dummy mode
-        center_x, center_y = pyautogui.position()
-        recorder = MouseRecorder(use_dummy=use_dummy)
-        recorder.start_recording()
-        
-        start_time = time.time()
-        
         try:
-            while time.time() - start_time < duration:
-                angle = (time.time() - start_time) * speed
-                x = center_x + int(radius * np.cos(angle))
-                y = center_y + int(radius * np.sin(angle))
-                pyautogui.moveTo(x, y, duration=0.01)
-                recorder.capture_frame()
-                time.sleep(0.01)
-        finally:
-            recorder.stop_recording()
-            return recorder.data
+            import pyautogui  # Moved inside conditional
+            center_x, center_y = pyautogui.position()
+            recorder = MouseRecorder(use_dummy=use_dummy)
+            recorder.start_recording()
+            
+            start_time = time.time()
+            
+            try:
+                while time.time() - start_time < duration:
+                    angle = (time.time() - start_time) * speed
+                    x = center_x + int(radius * np.cos(angle))
+                    y = center_y + int(radius * np.sin(angle))
+                    pyautogui.moveTo(x, y, duration=0.01)
+                    recorder.capture_frame()
+                    time.sleep(0.01)
+            finally:
+                recorder.stop_recording()
+                return recorder.data
+        except ImportError:
+            print("PyAutoGUI not available in headless mode")
     else:
         print("Dummy mode: Skipping actual mouse movements")
 
@@ -116,16 +118,13 @@ class MouseACTDataset(Dataset):
 
 
 def train_mouse_policy(args_dict, device='cuda'):
+    # Generate complete dummy dataset if needed
     if args_dict.get('use_dummy_images'):
-        # Create complete dummy dataset
-        num_samples = 1000  # Arbitrary number
+        num_samples = 1000
         timesteps = 3
-        dummy_images = np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8)
-        dummy_positions = np.zeros((num_samples, 2), dtype=np.float32)
-        
         recordings = {
-            'images': dummy_images,
-            'positions': dummy_positions
+            'images': np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8),
+            'positions': np.random.rand(num_samples, 2).astype(np.float32)
         }
     else:
         # Original loading code
