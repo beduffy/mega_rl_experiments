@@ -11,10 +11,15 @@ import pytest
 import torchvision.transforms as transforms
 import importlib.util
 
-# Import your model and helper functions
+# Get path to root directory (two levels up from tests/)
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-print(path_to_root)
-sys.path.append(path_to_root)
+# Add both project root and act_relevant_files/detr to path
+sys.path += [
+    path_to_root,
+    os.path.join(path_to_root, 'act_relevant_files', 'detr')
+]
+
+# Import your model and helper functions
 from act_relevant_files.detr.models.detr_vae import DETRVAE
 from act_relevant_files.policy import ACTPolicy, kl_divergence
 from act_relevant_files.detr.main import get_args_parser
