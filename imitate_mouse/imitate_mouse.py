@@ -34,6 +34,7 @@ class MouseRecorder:
         }
         self.use_dummy = use_dummy
         self.dummy_size = (64, 64)  # Smaller dummy images
+        self.dummy_pos = (960, 540)  # Center position for dummy mode
         
     def start_recording(self):
         self.recording = True
@@ -47,42 +48,49 @@ class MouseRecorder:
             return
             
         if self.use_dummy:
-            # Generate tiny black dummy frame
             img = np.zeros((*self.dummy_size, 3), dtype=np.uint8)
+            pos = self.dummy_pos  # Use dummy position
         else:
-            # Original capture code
-            img = pyautogui.screenshot(region=self.screen_region)
-            img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-            img = cv2.resize(img, (240, 240))
-        
+            # Wrap real pyautogui calls in try/except
+            try:
+                img = pyautogui.screenshot(region=self.screen_region)
+                pos = pyautogui.position()
+            except Exception as e:
+                print(f"PyAutoGUI failed: {str(e)}")
+                return
+
         # Store in history
         self.history.append(img)
         
         # Only save when history is full
         if len(self.history) == self.history.maxlen:
             self.data['images'].append(np.stack(self.history))
-            self.data['positions'].append(pyautogui.position())
+            self.data['positions'].append(pos)
             self.data['timestamps'].append(time.time())
 
 def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False):
     """Scripted mouse controller that moves in circles"""
-    recorder = MouseRecorder(use_dummy=use_dummy)
-    recorder.start_recording()
-    
-    start_time = time.time()
-    center_x, center_y = pyautogui.size().width//2, pyautogui.size().height//2
-    
-    try:
-        while time.time() - start_time < duration:
-            angle = (time.time() - start_time) * speed
-            x = center_x + int(radius * np.cos(angle))
-            y = center_y + int(radius * np.sin(angle))
-            pyautogui.moveTo(x, y, duration=0.01)
-            recorder.capture_frame()
-            time.sleep(0.01)
-    finally:
-        recorder.stop_recording()
-        return recorder.data
+    if not use_dummy:
+        # Only run real mouse movements if not in dummy mode
+        center_x, center_y = pyautogui.position()
+        recorder = MouseRecorder(use_dummy=use_dummy)
+        recorder.start_recording()
+        
+        start_time = time.time()
+        
+        try:
+            while time.time() - start_time < duration:
+                angle = (time.time() - start_time) * speed
+                x = center_x + int(radius * np.cos(angle))
+                y = center_y + int(radius * np.sin(angle))
+                pyautogui.moveTo(x, y, duration=0.01)
+                recorder.capture_frame()
+                time.sleep(0.01)
+        finally:
+            recorder.stop_recording()
+            return recorder.data
+    else:
+        print("Dummy mode: Skipping actual mouse movements")
 
 class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
@@ -108,13 +116,26 @@ class MouseACTDataset(Dataset):
 
 
 def train_mouse_policy(args_dict, device='cuda'):
-    with h5py.File(os.path.join(os.path.dirname(__file__), 'mouse_demo.hdf5'), 'r') as f:
-        recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
+    if args_dict.get('use_dummy_images'):
+        # Create complete dummy dataset
+        num_samples = 1000  # Arbitrary number
+        timesteps = 3
+        dummy_images = np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8)
+        dummy_positions = np.zeros((num_samples, 2), dtype=np.float32)
+        
+        recordings = {
+            'images': dummy_images,
+            'positions': dummy_positions
+        }
+    else:
+        # Original loading code
+        with h5py.File('mouse_demo.hdf5', 'r') as f:
+            recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
     
     # Optional: Replace with black frames
     if args_dict.get('use_dummy_images'):
-        # Tiny dummy data (batch_size x 3 x 64 x 64)
-        dummy_images = np.zeros((len(recordings['images']), 3, 64, 64), dtype=np.uint8)
+        # Create dummy data with correct dimensions (num_samples, timesteps, height, width, channels)
+        dummy_images = np.zeros((len(recordings['images']), 3, 64, 64, 3), dtype=np.uint8)  # 3 timesteps
         recordings['images'] = dummy_images
     
     dataset = MouseACTDataset(recordings)
