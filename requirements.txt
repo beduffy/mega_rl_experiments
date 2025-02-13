@@ -9,3 +9,4 @@ importlib>=1.0.4
 datetime>=4.3
 pytest>=6.2.5
 IPython>=8.0.0
+opencv-python-headless==4.9.0.80  # Headless version for CI
