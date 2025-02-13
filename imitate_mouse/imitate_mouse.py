@@ -96,12 +96,15 @@ def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False)
 
 class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
+        # Add resize transform
+        self.resize = transforms.Resize((image_size, image_size))
+        
         # Fix dummy image dimensions
         if isinstance(recordings['images'], np.ndarray) and recordings['images'].dtype == np.float64:
             recordings['images'] = recordings['images'].astype(np.float32)
             
         self.images = torch.stack([
-            self.resize(torch.tensor(img).float().permute(0, 3, 1, 2))  # Ensure proper float conversion
+            self.resize(torch.tensor(img).float().permute(0, 3, 1, 2))  # Now using defined resize
             for img in recordings['images']
         ]) / 255.0
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
