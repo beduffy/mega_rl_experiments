@@ -1,18 +1,18 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0  # Use the latest stable version
+    rev: v5.0.0  # Use the latest stable version
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-merge-conflict
 
   - repo: https://github.com/psf/black
-    rev: 23.1.0  # Black version
+    rev: 25.1.0  # Black version
     hooks:
       - id: black
 
   - repo: https://github.com/pre-commit/mirrors-pylint
-    rev: v2.17.4
+    rev: v3.0.0a5  # Updated to valid pylint version
     hooks:
       - id: pylint
 
