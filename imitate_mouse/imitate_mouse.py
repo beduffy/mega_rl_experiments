@@ -11,6 +11,7 @@ import h5py
 import argparse
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print(path_to_root)
@@ -95,11 +96,14 @@ def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False)
 
 class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
-        # Add resize transform for real images
-        self.resize = transforms.Resize(image_size) if image_size != 64 else lambda x: x
-        
-        # Process images
-        self.images = torch.stack([self.resize(torch.tensor(img).permute(0,3,1,2)) for img in recordings['images']]).float() / 255.0
+        # Fix dummy image dimensions
+        if isinstance(recordings['images'], np.ndarray) and recordings['images'].dtype == np.float64:
+            recordings['images'] = recordings['images'].astype(np.float32)
+            
+        self.images = torch.stack([
+            self.resize(torch.tensor(img).float().permute(0, 3, 1, 2))  # Ensure proper float conversion
+            for img in recordings['images']
+        ]) / 255.0
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
         self.positions[:, 0] /= screen_size[0]  # Normalize X
         self.positions[:, 1] /= screen_size[1]  # Normalize Y
@@ -136,7 +140,7 @@ def train_mouse_policy(args_dict, device='cuda'):
         recordings['images'] = dummy_images
     
     dataset = MouseACTDataset(recordings)
-    loader = DataLoader(dataset, batch_size=8, shuffle=True)
+    loader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=2, persistent_workers=True)
     
     # ACT policy config
     policy_config = {
@@ -168,7 +172,8 @@ def train_mouse_policy(args_dict, device='cuda'):
         
         epoch_start = time.time()
         
-        for images, qpos, actions, is_pad in loader:
+        progress = tqdm(loader, desc=f'Epoch {epoch}', unit='batch')
+        for batch_idx, (images, qpos, actions, is_pad) in enumerate(progress):
             images = images.to(device)
             qpos = qpos.to(device)
             actions = actions.to(device)
@@ -195,6 +200,13 @@ def train_mouse_policy(args_dict, device='cuda'):
             optimizer.step()
             
             total_loss += loss.item()
+            
+            # Update progress bar
+            progress.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'x_err': f'{x_error:.4f}',
+                'y_err': f'{y_error:.4f}'
+            })
         
         epoch_time = time.time() - epoch_start
         
