@@ -99,6 +99,7 @@ def build_ACT_model_and_optimizer(args_override):
     args.kl_weight = 10
     args.chunk_size = 100
     args.hidden_dim = 512
+    args.latent_dim = 256
     args.batch_size = 1
     args.dim_feedforward = 3200
     args.num_epochs = 2000
@@ -165,4 +166,3 @@ def build_CNNMLP_model_and_optimizer(args_override):
                                   weight_decay=args.weight_decay)
 
     return model, optimizer
-

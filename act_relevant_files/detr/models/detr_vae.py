@@ -33,7 +33,7 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 class DETRVAE(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, num_actions):
+    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, num_actions, hidden_dim, latent_dim):
         """ Initializes the model.
         Parameters:
             backbones: torch module of the backbone to be used. See backbone.py
@@ -44,10 +44,12 @@ class DETRVAE(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.num_queries = num_queries
         self.camera_names = camera_names
         self.transformer = transformer
         self.encoder = encoder
+        self.latent_dim = latent_dim
 
         # new
         # TODO argparse should decide this
@@ -56,7 +58,6 @@ class DETRVAE(nn.Module):
         # self.num_actions = 2  # original
         self.num_actions = num_actions  # Get from config
         print(f"num_actions: {self.num_actions}, state_dim: {state_dim}")
-
 
         hidden_dim = transformer.d_model
         self.action_head = nn.Linear(hidden_dim, state_dim)
@@ -74,16 +75,22 @@ class DETRVAE(nn.Module):
             self.backbones = None
 
         # encoder extra parameters
-        self.latent_dim = 32 # final size of latent z # TODO tune
         self.cls_embed = nn.Embedding(1, hidden_dim) # extra cls token embedding
         self.encoder_action_proj = nn.Linear(self.num_actions, hidden_dim) # project action to embedding
         self.encoder_joint_proj = nn.Linear(state_dim, hidden_dim)  # project qpos to embedding
-        self.latent_proj = nn.Linear(hidden_dim, self.latent_dim*2) # project hidden state to latent std, var
-        self.register_buffer('pos_table', get_sinusoid_encoding_table(1+1+num_queries, hidden_dim)) # [CLS], qpos, a_seq
+        self.latent_proj = nn.Linear(hidden_dim, 2 * self.latent_dim)
+        self.pos_table = get_sinusoid_encoding_table(1+1+num_queries, hidden_dim).to(self.device)
 
         # decoder extra parameters
-        self.latent_out_proj = nn.Linear(self.latent_dim, hidden_dim) # project latent sample to embedding
+        self.latent_out_proj = nn.Linear(self.latent_dim, hidden_dim)
         self.additional_pos_embed = nn.Embedding(2, hidden_dim) # learned position embedding for proprio and latent
+
+        # Move all parameters to device
+        self.to(self.device)
+        print(f"Latent projection: {self.latent_proj.in_features}->{self.latent_proj.out_features}")
+        # Should show: 512->64 (for latent_dim=32)
+        print(f"Output projection: {self.latent_out_proj.in_features}->{self.latent_out_proj.out_features}") 
+        # Should show: 32->512
 
     def forward(self, qpos, image, env_state, actions=None, is_pad=None):
         """
@@ -134,6 +141,18 @@ class DETRVAE(nn.Module):
             mu = latent_info[:, :self.latent_dim]  # [batch, latent_dim]
             logvar = latent_info[:, self.latent_dim:2*self.latent_dim]  # [batch, latent_dim]
             latent_sample = reparametrize(mu, logvar)
+            
+            # Add debug prints before projection
+            print(f"Input qpos device: {qpos.device}")
+            print(f"Image tensor device: {image.device}")
+            
+            # Add buffer check
+            print(f"Positional table device: {self.pos_table.device}")
+            print(f"Encoder device: {next(self.encoder.parameters()).device}")
+            
+            # Existing projection debug
+            print(f"Latent sample device: {latent_sample.device}")
+            print(f"Projection weight device: {self.latent_out_proj.weight.device}")
             latent_input = self.latent_out_proj(latent_sample)
         else:
             mu = logvar = None
@@ -145,6 +164,7 @@ class DETRVAE(nn.Module):
             all_cam_features = []
             all_cam_pos = []
             for cam_id, cam_name in enumerate(self.camera_names):
+                
                 features, pos = self.backbones[cam_id](image[:, cam_id])  # HARDCODED
                 features = features[0]  # take the last layer feature
                 pos = pos[0]
@@ -295,7 +315,9 @@ def build(args):
         num_queries=args.num_queries,
         camera_names=args.camera_names,
         num_actions=args.num_actions,
-    )
+        hidden_dim=args.hidden_dim,
+        latent_dim=args.latent_dim,
+    ).to(args.device)
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("number of parameters: %.2fM" % (n_parameters/1e6,))

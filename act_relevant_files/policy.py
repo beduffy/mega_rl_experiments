@@ -4,16 +4,25 @@ import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms as transforms
 import IPython
+import torch
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from detr.main import build_ACT_model_and_optimizer, build_CNNMLP_model_and_optimizer
+from detr.util.misc import nested_tensor_from_tensor_list
 e = IPython.embed
 
 class ACTPolicy(nn.Module):
     def __init__(self, args_override):
         super().__init__()
         model, optimizer = build_ACT_model_and_optimizer(args_override)
-        self.model = model # CVAE decoder
+        self.model = model
+        self.model.to(args_override['device'])
+        
+        # Device verification for all parameters
+        print("\n=== Model Device Check ===")
+        for name, param in self.model.named_parameters():
+            print(f"{name}: {param.device}")
+        print("==========================\n")
         self.optimizer = optimizer
         self.kl_weight = args_override['kl_weight']
         print(f'KL Weight {self.kl_weight}')
@@ -23,6 +32,11 @@ class ACTPolicy(nn.Module):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         image = normalize(image)
+        
+        # Convert to nested tensor if needed
+        if image.dim() == 4:  # [batch, channels, H, W]
+            image = nested_tensor_from_tensor_list(image)  # Remove extra list wrap
+        
         if actions is not None: # training time
             if actions.ndim == 3:
                 actions = actions[:, 0]
@@ -57,6 +71,9 @@ class CNNMLPPolicy(nn.Module):
         env_state = None # TODO
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
+        if isinstance(image, torch.Tensor):
+            # Wrap in ImageList if needed
+            image = nested_tensor_from_tensor_list([image])
         image = normalize(image)
         if actions is not None: # training time
             actions = actions[:, 0]

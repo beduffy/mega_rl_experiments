@@ -174,7 +174,6 @@ def train_mouse_policy(args_dict, device='cuda'):
     
     # ACT policy config
     policy_config = {
-        'lr': args_dict['lr'],
         'num_queries': args_dict['chunk_size'],
         'kl_weight': args_dict['kl_weight'],
         'hidden_dim': args_dict['hidden_dim'],
@@ -184,9 +183,11 @@ def train_mouse_policy(args_dict, device='cuda'):
         'enc_layers': 4,
         'dec_layers': 7,
         'nheads': 8,
+        'camera_names': ['mouse_cam'],
         'num_actions': 2,
         'state_dim': 2,
-        'camera_names': ['mouse_cam'],
+        'latent_dim': 32,
+        'device': device
     }
     
     policy = ACTPolicy(policy_config).to(device)

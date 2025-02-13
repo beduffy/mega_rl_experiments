@@ -107,6 +107,9 @@ class ServoDataset(Dataset):
         else:
             image = self.augment(image)
             
+        # Check image tensor dimensions before conversion
+        print(f"Input image shape: {image.shape}")  # Should be [batch, channels, H, W]
+        
         return image, torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
 
 
@@ -139,11 +142,16 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         
         for batch_idx, (images, qpos, targets) in enumerate(train_loader):
             images = images.to(device)
-            # Remove unnecessary unsqueeze and channel replication
-            if images.shape[1] == 1:  # Handle grayscale if needed
-                images = images.repeat(1, 3, 1, 1)  # Convert to RGB
             qpos = qpos.to(device)
-            targets = targets.to(device)
+            # Handle multi-camera input by averaging across cameras
+            if images.dim() == 5:  # (B, num_cam, C, H, W)
+                # Average across camera dimension to get single image
+                images = images.mean(dim=1)  # Result: (B, C, H, W)
+            # Ensure 3 channels even for averaged images
+            if images.shape[1] == 1:
+                images = images.repeat(1, 3, 1, 1)
+            elif images.shape[1] > 3:  # Handle feature maps
+                images = images[:, :3]  # Take first 3 channels
             
             # For ACTPolicy, ensure proper image dimensions (B, C, H, W)
             with torch.cuda.amp.autocast():
