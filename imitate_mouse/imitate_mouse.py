@@ -97,7 +97,7 @@ class MouseACTDataset(Dataset):
 
 
 def train_mouse_policy(args_dict, device='cuda'):
-    with h5py.File('mouse_demo.hdf5', 'r') as f:
+    with h5py.File(os.path.join(os.path.dirname(__file__), 'mouse_demo.hdf5'), 'r') as f:
         recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
     
     dataset = MouseACTDataset(recordings)
@@ -128,20 +128,29 @@ def train_mouse_policy(args_dict, device='cuda'):
     for epoch in range(args_dict['num_epochs']):
         policy.train()
         total_loss = 0
+        total_x_error = 0.0
+        total_y_error = 0.0
         
         for images, qpos, actions, is_pad in loader:
             images = images.to(device)
             qpos = qpos.to(device)
-
-            # qpos = torch.zeros(1, 2).to(device)  # Add batch dimension (1,2)
-            # qpos = qpos.repeat(images.size(0), 1)  # Expand to match batch size
-            # actions = torch.stack([torch.tensor([x/1920, y/1080]) for x, y in actions])
             actions = actions.to(device)
             is_pad = is_pad.to(device)
             
             # Forward pass
             loss_dict = policy(qpos, images, actions, is_pad)
             loss = loss_dict['loss']
+            
+            # Accumulate errors
+            with torch.no_grad():
+                # Get action predictions directly from model's forward pass
+                a_hat = policy.model(qpos, images, None, actions, is_pad)[0]  # Access first element of tuple
+                pred_denorm = a_hat.detach().cpu()
+                target_denorm = actions.detach().cpu()
+                x_error = torch.abs(pred_denorm[:,0] - target_denorm[:,0]).mean().item()
+                y_error = torch.abs(pred_denorm[:,1] - target_denorm[:,1]).mean().item()
+                total_x_error += x_error * images.size(0)
+                total_y_error += y_error * images.size(0)
             
             # Backward pass
             optimizer.zero_grad()
@@ -150,9 +159,33 @@ def train_mouse_policy(args_dict, device='cuda'):
             
             total_loss += loss.item()
         
+        # Print diagnostics with 2 decimal places
         avg_loss = total_loss / len(loader)
-        print(f'Epoch {epoch} Loss: {avg_loss:.4f}')
+        avg_x_error = total_x_error / len(dataset)
+        avg_y_error = total_y_error / len(dataset)
+        print(f'\nEpoch {epoch} Loss: {avg_loss:.4f}')
+        print(f'X Error: {avg_x_error:.2f}px | Y Error: {avg_y_error:.2f}px')
         
+        # Print sample predictions
+        with torch.no_grad():
+            sample_images, sample_qpos, sample_actions, sample_is_pad = next(iter(loader))
+            sample_images = sample_images.to(device)
+            sample_qpos = sample_qpos.to(device)
+            
+            # Direct model call for inference
+            a_hat, _, _ = policy.model(sample_qpos, sample_images)
+            sample_pred = a_hat.cpu()
+            sample_target = sample_actions.cpu()
+            
+            print("\nSample predictions vs targets:")
+            for i in range(3):  # First 3 samples
+                pred_x, pred_y = sample_pred[i].numpy()
+                target_x, target_y = sample_target[i].numpy()
+                print(f"  Sample {i}:")
+                print(f"    Predicted: ({pred_x:.1f}, {pred_y:.1f})")
+                print(f"    Target:    ({target_x:.1f}, {target_y:.1f})")
+                print(f"    Error:     ({abs(pred_x-target_x):.1f}, {abs(pred_y-target_y):.1f})px")
+
         # Save best checkpoint
         if avg_loss < best_loss:
             best_loss = avg_loss
