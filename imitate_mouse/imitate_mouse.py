@@ -173,7 +173,7 @@ def train_mouse_policy(args_dict, device='cuda'):
             sample_qpos = sample_qpos.to(device)
             
             # Direct model call for inference
-            a_hat, _, _ = policy.model(sample_qpos, sample_images)
+            a_hat, _, _ = policy.model(sample_qpos, sample_images, env_state=None)
             sample_pred = a_hat.cpu()
             sample_target = sample_actions.cpu()
             
