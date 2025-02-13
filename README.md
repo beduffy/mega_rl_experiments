@@ -1,5 +1,8 @@
 # Robotics Learning Projects
 
+![Python Tests](https://github.com/[owner]/[repository]/actions/workflows/test.yml/badge.svg)
+
+
 A collection of reinforcement learning and imitation learning projects for robotic control tasks.
 
 ## Project Structure
