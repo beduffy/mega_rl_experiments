@@ -17,7 +17,7 @@ class ACTPolicy(nn.Module):
         model, optimizer = build_ACT_model_and_optimizer(args_override)
         self.model = model
         self.model.to(args_override['device'])
-        
+
         # Device verification for all parameters
         # print("\n=== Model Device Check ===")
         # for name, param in self.model.named_parameters():
@@ -32,11 +32,11 @@ class ACTPolicy(nn.Module):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         image = normalize(image)
-        
+
         # Convert to nested tensor if needed
         if image.dim() == 4:  # [batch, channels, H, W]
             image = nested_tensor_from_tensor_list(image)  # Remove extra list wrap
-        
+
         if actions is not None: # training time
             if actions.ndim == 3:
                 actions = actions[:, 0]
