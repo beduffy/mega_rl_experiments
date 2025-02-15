@@ -8,7 +8,7 @@ import pyautogui
 from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 
 
-def run_policy_eval(args):
+def run_policy_eval(args, num_steps=100):
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
 
     # Load checkpoint with proper error handling
@@ -39,7 +39,7 @@ def run_policy_eval(args):
     recorder.start_recording()
 
     try:
-        while True:
+        for _ in range(num_steps):
             # Generate dummy black frames if requested
             if args.dummy:
                 black_frame = np.zeros((240, 240, 3), dtype=np.uint8)

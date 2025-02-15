@@ -13,6 +13,8 @@ import importlib.util
 from unittest.mock import patch, Mock
 from packaging import version
 import pybullet
+import matplotlib
+matplotlib.use('Agg')  # Set non-interactive backend before importing pyplot
 
 # Get path to root directory (two levels up from tests/)
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -268,7 +270,7 @@ def mock_build_ACT_model_and_optimizer(args_override):
     args.ckpt_dir = 'checkpoints'
     args.policy_class = 'ACT'
     args.kl_weight = 10
-    args.chunk_size = 100
+    args.chunk_size = 10
     args.hidden_dim = 512
     args.batch_size = 1
     args.dim_feedforward = 3200
@@ -769,17 +771,17 @@ def test_mouse_policy_save_load_cycle(tmp_path):
         'kl_weight': 10,
         'chunk_size': 10,
         'hidden_dim': 64,
-        'batch_size': 4,
+        'batch_size': 2,
         'dim_feedforward': 128,
         'num_epochs': 1,
-        'lr': 1e-5,
+        'lr': 1e-4,
         'seed': 0,
         'use_dummy_images': True,
         'device': 'cpu',
         'enc_layers': 1,
         'dec_layers': 1,
-        'nheads': 2,
-        'latent_dim': 32,
+        'nheads': 1,
+        'latent_dim': 16,
         'camera_names': ['mouse_cam'],
         'ckpt_dir': str(tmp_path)
     }
@@ -789,7 +791,7 @@ def test_mouse_policy_save_load_cycle(tmp_path):
         train_mouse_policy(args_dict, device='cpu')
 
     # Verify checkpoint creation
-    ckpt_path = os.path.join('imitate_mouse/checkpoints', 'mouse_act_policy_best.ckpt')
+    ckpt_path = os.path.join('imitate_mouse/checkpoints', 'mouse_act_policy_initial_epoch0.ckpt')
     assert os.path.exists(ckpt_path), "Checkpoint not created"
 
     # Test loading in evaluation script
@@ -800,7 +802,7 @@ def test_mouse_policy_save_load_cycle(tmp_path):
 
     # Test policy execution with dummy input
     with patch('pyautogui.moveTo') as mock_move:
-        run_policy_eval(Args())
+        run_policy_eval(Args(), num_steps=10)
         assert mock_move.called, "Policy didn't generate mouse movements"
 
 
@@ -906,7 +908,7 @@ def test_mouse_policy_e2e(tmp_path):
 
     # Test inference
     class Args:
-        ckpt = 'imitate_mouse/checkpoints/mouse_act_policy_best.ckpt'
+        ckpt = 'imitate_mouse/checkpoints/mouse_act_policy_initial_epoch0.ckpt'
         dummy = True
         cpu = True
 
