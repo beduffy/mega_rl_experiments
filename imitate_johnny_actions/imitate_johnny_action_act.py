@@ -86,14 +86,17 @@ class ServoDataset(Dataset):
             transforms.ColorJitter(brightness=0.2, contrast=0.2)
         ])
 
+
     def dict_to_tensor(self, action_dict):
         return torch.tensor([
             action_dict.get(name, 0.0)  # Use 0.0 as default for missing joints
             for name in JOINT_ORDER
         ], dtype=torch.float32)
 
+
     def __len__(self):
         return len(self.images)
+
 
     def __getitem__(self, idx):
         """Returns a single sample from the dataset.
@@ -136,6 +139,11 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
     )
 
     total_start_time = time.time()
+
+    # Add validation frequency parameters
+    GREET_VAL_FREQ = 5  # Validate greet sequence every 5 epochs
+    PYBLET_VAL_FREQ = 10  # Run PyBullet eval every 10 epochs
+    best_greet_error = float('inf')
 
     for epoch in range(num_epochs):
         epoch_start_time = time.time()
@@ -248,6 +256,32 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
                 'training_args': vars(args)
             }, os.path.join(os.path.dirname(__file__), f'best_policy_{timestamp}.pth'))
 
+        # After completing epoch training:
+        if epoch % GREET_VAL_FREQ == 0:
+            greet_mse, greet_max_err = validate_greet_sequence(policy, device)
+            wandb.log({
+                "greet_mse": greet_mse,
+                "greet_max_error": greet_max_err
+            })
+
+            # Update best greet error
+            if greet_mse < best_greet_error:
+                best_greet_error = greet_mse
+                torch.save(policy.state_dict(), f'best_greet_policy_{timestamp}.pth')
+
+        if epoch % PYBLET_VAL_FREQ == 0:
+            print("\nRunning PyBullet evaluation...")
+            try:
+                sim_metrics = evaluate_in_pybullet(policy, device)
+                wandb.log({
+                    "com_deviation": np.mean(sim_metrics['com_deviation']),
+                    "max_com_deviation": np.max(sim_metrics['com_deviation']),
+                    "fall_detected": float(sim_metrics['fall_detected'])
+                })
+                print(f"PyBullet Metrics: COM Dev {np.mean(sim_metrics['com_deviation']):.3f}m, Fall: {sim_metrics['fall_detected']}")
+            except Exception as e:
+                print(f"PyBullet evaluation failed: {str(e)}")
+
         epoch_time = time.time() - epoch_start_time
         mins, secs = divmod(epoch_time, 60)
         print(f'Epoch {epoch} took: {int(mins)}m {secs:.1f}s | Loss: {avg_loss:.7f}')
@@ -285,10 +319,12 @@ def validate_greet_sequence(policy, device='cpu'):
 
 def evaluate_in_pybullet(policy, device='cpu'):
     """Run policy in headless PyBullet simulation"""
-    # TODO untested
     p.connect(p.DIRECT)
     p.setGravity(0, 0, -9.81)
-    robot = p.loadURDF("your_robot.urdf", [0, 0, 0.25])
+    # Use the same URDF path as your other scripts
+    robot = p.loadURDF("/home/ben/all_projects/ainex_private_ws/ainex_private/src/ainex_simulations/ainex_description/urdf/ainex.urdf",
+                      [0, 0, 0.25],
+                      useFixedBase=False)  # Match your training setup
 
     metrics = {
         'com_deviation': [],

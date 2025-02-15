@@ -12,6 +12,7 @@ from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, JOINT_OR
 
 # TODO see how slow CNN is. profile. Also check GPU and stuff or?
 # TODO how to pytorch AMD?
+# TODO are all 24 joints outputting?!?
 
 
 
@@ -92,7 +93,7 @@ def set_joint_angles_instantly(robot, angle_dict_to_try):
                                 controlMode=p.POSITION_CONTROL,
                                 positionGain=0.01,
                                 targetPosition=angle_dict_to_try[joint_name],  # Radians for revolute, meters for prismatic
-                                force=100)  # Maximum force in Newtons
+                                force=500)  # Maximum force in Newtons
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
