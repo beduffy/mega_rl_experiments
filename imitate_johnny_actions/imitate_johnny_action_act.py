@@ -113,7 +113,7 @@ class ServoDataset(Dataset):
         return image, torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
 
 
-def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
+def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_config=None, args=None):
     scaler = torch.cuda.amp.GradScaler()  # Add mixed precision
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr, weight_decay=1e-5)
     # More balanced weighting for problem joints
@@ -183,7 +183,11 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
             if not os.path.exists('checkpoints'):
                 os.makedirs('checkpoints', exist_ok=True)  # Create directory if needed
             ckpt_path = os.path.join('checkpoints', f'policy_epoch{epoch}_{timestamp}.pth')
-            torch.save(policy.state_dict(), ckpt_path)
+            torch.save({
+                'model_state': policy.state_dict(),
+                'config': policy_config,  # Add config to checkpoint
+                'training_args': vars(args)
+            }, ckpt_path)
 
         # Update learning rate
         scheduler.step(total_loss / len(train_loader))
@@ -235,7 +239,11 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         # Update best model
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), f'best_policy_{timestamp}.pth'))
+            torch.save({
+                'model_state': policy.state_dict(),
+                'config': policy_config,  # Add config to checkpoint
+                'training_args': vars(args)
+            }, os.path.join(os.path.dirname(__file__), f'best_policy_{timestamp}.pth'))
 
         epoch_time = time.time() - epoch_start_time
         mins, secs = divmod(epoch_time, 60)
@@ -315,12 +323,16 @@ def main():
         }
     )
 
-    train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device)
+    train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device, policy_config=policy_config, args=args)
 
     # Save trained policy with timestamp and epochs
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     save_path = f'servo_policy_24dof_{timestamp}_ep{args.num_epochs}.pth'
-    torch.save(policy.state_dict(), save_path)
+    torch.save({
+        'model_state': policy.state_dict(),
+        'config': policy_config,  # Add config to checkpoint
+        'training_args': vars(args)
+    }, save_path)
 
 
 if __name__ == '__main__':
