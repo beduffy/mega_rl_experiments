@@ -133,7 +133,9 @@ def create_dummy_detrvae(state_dim=1, action_dim=1, num_queries=5, hidden_dim=51
         state_dim=state_dim,
         num_queries=num_queries,
         camera_names=camera_names,
-        num_actions=action_dim
+        num_actions=action_dim,
+        hidden_dim=hidden_dim,
+        latent_dim=2
     )
     
     # Inject dummy submodules to allow the forward pass to run.
