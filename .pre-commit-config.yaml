@@ -40,8 +40,7 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: /home/ben/miniconda3/envs/py38/bin/pytest
+        entry: ./scripts/run_pytest.sh
         language: system
         pass_filenames: false
         always_run: true
-        additional_dependencies: []  # Keep this empty
