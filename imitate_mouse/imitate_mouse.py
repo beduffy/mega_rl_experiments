@@ -37,12 +37,15 @@ class MouseRecorder:
         self.dummy_size = (64, 64)  # Smaller dummy images
         self.dummy_pos = (960, 540)  # Center position for dummy mode
 
+
     def start_recording(self):
         self.recording = True
         self.data = {'images': [], 'positions': [], 'timestamps': []}
 
+
     def stop_recording(self):
         self.recording = False
+
 
     def capture_frame(self):
         if not self.recording:
@@ -68,6 +71,7 @@ class MouseRecorder:
             self.data['images'].append(np.stack(self.history))
             self.data['positions'].append(pos)
             self.data['timestamps'].append(time.time())
+
 
 def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False):
     """Scripted mouse controller that moves in circles"""
@@ -96,6 +100,7 @@ def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False)
     else:
         print("Dummy mode: Skipping actual mouse movements")
 
+
 class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
         # Add resize transform
@@ -116,8 +121,10 @@ class MouseACTDataset(Dataset):
         # Use normalized mouse positions as the qpos (2D state) instead of a 14-dim dummy.
         self.qpos = self.positions.clone()
 
+
     def __len__(self):
         return len(self.images)
+
 
     def __getitem__(self, idx):
         frames = self.images[idx]
@@ -154,8 +161,29 @@ def train_mouse_policy(args_dict, device='cuda'):
         positions[:, 0] = 0.5 + radius * np.cos(angles)  # X coordinates
         positions[:, 1] = 0.5 + radius * np.sin(angles)  # Y coordinates
 
+        # Create directory for plots if it doesn't exist
+        os.makedirs('imitate_mouse/plots', exist_ok=True)
+
+        # Create a dummy image with a white circle in the center
+        dummy_image = np.zeros((64, 64, 3), dtype=np.uint8)
+        center = (32, 32)
+        radius = 10  # very strange to put white circle in center
+        cv2.circle(dummy_image, center, radius, (255, 255, 255), -1)
+        cv2.imwrite('imitate_mouse/plots/dummy_image.jpg', dummy_image)
+
+        # Plot positions to verify circular pattern
+        plt.figure(figsize=(10, 10))
+        plt.scatter(positions[:, 0] * 64, positions[:, 1] * 64, alpha=0.5)
+        plt.title('Mouse Target Positions (in pixels)')
+        plt.xlabel('X Position (pixels)')
+        plt.ylabel('Y Position (pixels)')
+        plt.grid(True)
+        plt.savefig('imitate_mouse/plots/target_positions.jpg')
+        plt.close()
+
+        # Create recordings with the dummy image repeated
         recordings = {
-            'images': np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8),
+            'images': np.stack([dummy_image] * (num_samples * timesteps)).reshape(num_samples, timesteps, 64, 64, 3),
             'positions': positions.astype(np.float32)
         }
     else:
@@ -315,7 +343,7 @@ def train_mouse_policy(args_dict, device='cuda'):
         all_targets = np.concatenate(all_targets)
         all_preds = np.concatenate(all_preds)
         plot_positions(all_targets, all_preds, epoch)
-        wandb.log({"position_plot": wandb.Image(f'training_plots/epoch_{epoch:04d}.png')})
+        wandb.log({"position_plot": wandb.Image(f'imitate_mouse/plots/epoch_{epoch:04d}.png')})
 
 
 def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
@@ -343,7 +371,7 @@ def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
 
     # Save without displaying
     os.makedirs('training_plots', exist_ok=True)
-    plt.savefig(f'training_plots/epoch_{epoch:04d}.png')
+    plt.savefig(f'training_plots/targets_vs_predictions_epoch_{epoch:04d}.png')
     plt.close()
 
 
