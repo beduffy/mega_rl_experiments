@@ -25,10 +25,12 @@ def run_policy_eval(args):
         "kl_weight": 10,
         "num_actions": 2,
         "state_dim": 2,
+        "latent_dim": 32,  # Add latent_dim to match training config
+        "device": device,
     }
 
     policy = ACTPolicy(policy_config).to(device)
-    policy.load_state_dict(torch.load(args.ckpt))
+    policy.load_state_dict(torch.load(args.ckpt, map_location=device), strict=False)
     policy.eval()
 
     recorder = MouseRecorder()
@@ -83,3 +85,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_policy_eval(args)
+
+"""
+python imitate_mouse/run_mouse_policy.py --ckpt imitate_mouse/checkpoints/mouse_act_policy_best.ckpt --dummy --cpu
+"""
