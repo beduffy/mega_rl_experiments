@@ -3,7 +3,7 @@ datetime>=4.3
 h5py>=3.2.1
 IPython>=8.0.0
 matplotlib>=3.7.0
-numpy>=1.26.4
+numpy>=1.26
 opencv-python-headless==4.9.0.80  # Headless version for CI
 pandas>=1.5.3
 pyautogui>=0.9.53
