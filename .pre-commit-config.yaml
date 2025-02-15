@@ -42,8 +42,7 @@ repos:
         name: pytest
         entry: ./scripts/run_pytest.sh
         language: system
-        pass_filenames: true  # Only run tests related to changed files
-        args: [-v, --cov=./, --cov-report=term]
-        files: ^src/|^tests/  # Only trigger when source or test files change
-        exclude: ^docs/|^examples/  # Exclude non-code directories
-        always_run: false  # Don't run if no relevant files changed
+        pass_filenames: true  # Pass changed filenames to script
+        files: ^src/|^tests/  # Only trigger when source/test files change
+        exclude: ^docs/|^examples/
+        always_run: false
