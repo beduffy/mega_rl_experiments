@@ -33,8 +33,8 @@ class DummyBackbone(nn.Module):
     def __init__(self):
         super().__init__()
         self.num_channels = 3
-    
-    
+
+
     def forward(self, x):
         # x: [batch, C, H, W]
         batch = x.shape[0]
@@ -53,13 +53,13 @@ class DummyTransformer(nn.Module):
     def forward(self, src, mask=None, query_embed=None, pos_embed=None, latent_input=None, proprio_input=None, additional_pos_embed=None):
         # For dummy purposes, maintain batch size from first argument
         batch_size = src.size(0) if src.dim() > 1 else src.size(1)
-        
+
         # Get num_queries from query_embed
         num_queries = query_embed.size(0)
-        
+
         # Return a tensor of shape [batch, num_queries, d_model]
         hs = torch.randn(batch_size, num_queries, self.d_model)
-        
+
         # Return as a list to match DETR's behavior
         return [hs]  # Shape: [batch, num_queries, d_model]
 
@@ -78,8 +78,8 @@ class DummyTransformerEncoder(nn.Module):
             batch_first=True
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
-    
-    
+
+
     def forward(self, src, pos=None, src_key_padding_mask=None):
         # Add positional embeddings if provided
         if pos is not None:
@@ -90,14 +90,14 @@ class DummyTransformerEncoder(nn.Module):
                 pos = pos.expand(-1, src.size(1), -1)
             # Add positional embeddings to input
             src = src + pos
-        
+
         # Transpose key_padding_mask if needed
         if src_key_padding_mask is not None:
             # PyTorch expects key_padding_mask of shape (batch_size, seq_len)
             # but we might get (seq_len, batch_size), so transpose if needed
             if src_key_padding_mask.size(0) != src.size(0):
                 src_key_padding_mask = src_key_padding_mask.t()
-        
+
         # Apply transformer encoder without passing pos
         output = self.encoder(src, src_key_padding_mask=src_key_padding_mask)
         return output
@@ -119,11 +119,11 @@ def mlp(input_dim, hidden_dim, output_dim, hidden_depth):
 def create_dummy_detrvae(state_dim=1, action_dim=1, num_queries=5, hidden_dim=512):
     camera_names = ['dummy']
     backbones = [DummyBackbone()]
-    
+
     # Create dummy transformer and encoder
     transformer = DummyTransformer(hidden_dim)
     encoder = DummyTransformerEncoder(hidden_dim)
-    
+
     # Create a dummy DETRVAE instance.
     # Note: DETRVAE.__init__ requires backbones, transformer, encoder, state_dim, num_queries, camera_names, and num_actions.
     model = DETRVAE(
@@ -137,50 +137,50 @@ def create_dummy_detrvae(state_dim=1, action_dim=1, num_queries=5, hidden_dim=51
         hidden_dim=hidden_dim,
         latent_dim=2
     )
-    
+
     # Inject dummy submodules to allow the forward pass to run.
     model.encoder_action_proj = nn.Linear(action_dim, hidden_dim)
     model.encoder_joint_proj = nn.Linear(state_dim, hidden_dim)
     model.cls_embed = nn.Embedding(1, hidden_dim)
     with torch.no_grad():
         model.cls_embed.weight.fill_(0.1)
-    
+
     model.pos_table = torch.randn(1, num_queries, hidden_dim)
-    
+
     # Create a new encoder that handles positional embeddings correctly
     encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8, batch_first=True)
     model.encoder = DummyTransformerEncoder(hidden_dim)
-    
+
     # Assume latent_dim is 1; latent_proj outputs 2 numbers (first half mu, second half logvar)
     model.latent_dim = 2  # Set to match the size we're getting for mu
     model.latent_proj = nn.Linear(hidden_dim, 4)  # 2*latent_dim to get both mu and logvar
     model.latent_out_proj = nn.Linear(2, hidden_dim)  # latent_dim to hidden_dim
     model.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
-    
+
     # Use the same DummyTransformer instance we created earlier
     model.transformer = transformer
-    
+
     # Add query_embed for transformer - IMPORTANT: size should match num_queries
     model.query_embed = nn.Embedding(num_queries, hidden_dim)
     with torch.no_grad():
         model.query_embed.weight.fill_(0.1)
-    
+
     # Add action head that properly transposes the output
     class ActionHead(nn.Module):
         def __init__(self, hidden_dim, state_dim):
             super().__init__()
             self.linear = nn.Linear(hidden_dim, state_dim)
-        
+
         def forward(self, x):
             # x is [batch, num_queries, hidden_dim]
             # Select the first query for each batch
             x = x[:, 0]  # Now [batch, hidden_dim]
             x = self.linear(x)  # [batch, state_dim]
             return x  # Returns [batch, state_dim]
-    
+
     model.action_head = ActionHead(hidden_dim, state_dim)
     model.is_pad_head = nn.Linear(hidden_dim, 1)
-    
+
     # Monkey-patch the forward method to bypass the complex image/backbone logic.
     def dummy_forward(self, qpos, image, env_state, actions=None, is_pad=None):
         # Check that qpos is 2-dimensional: (batch, state_dim)
@@ -196,7 +196,7 @@ def create_dummy_detrvae(state_dim=1, action_dim=1, num_queries=5, hidden_dim=51
         logvar = torch.zeros(batch, 1, device=qpos.device)
         is_pad_hat = torch.zeros(batch, 1, device=qpos.device)
         return out, is_pad_hat, (mu, logvar)
-    
+
     model.forward = dummy_forward.__get__(model, DETRVAE)
     return model
 
@@ -207,9 +207,9 @@ def test_detrvae_forward_pass_training():
     state_dim = 1
     action_dim = 1
     num_queries = 3   # Expecting encoder input sequence: [CLS, qpos, action]
-    
+
     model = create_dummy_detrvae(state_dim=state_dim, action_dim=action_dim, num_queries=num_queries)
-    
+
     qpos = torch.randn(batch, state_dim)
     # Dummy image tensor: [batch, num_cam, channel, H, W] (here 1 camera)
     image = torch.randn(batch, 1, 3, 64, 64)
@@ -218,10 +218,10 @@ def test_detrvae_forward_pass_training():
     actions = torch.randn(batch, 1, action_dim)
     # Dummy is_pad tensor: [batch, seq] (boolean)
     is_pad = torch.zeros(batch, 1, dtype=torch.bool)
-    
+
     # Call forward pass in training mode
     a_hat, is_pad_hat, (mu, logvar) = model(qpos, image, env_state, actions, is_pad)
-    
+
     # Since our dummy forward selects the first token, a_hat should be [batch, state_dim]
     assert a_hat.shape == (batch, state_dim)
     # Latent variables (mu and logvar) should have batch size matching qpos's batch
@@ -256,7 +256,7 @@ def mock_build_ACT_model_and_optimizer(args_override):
     """Mock version of build_ACT_model_and_optimizer that doesn't try to parse arguments"""
     # Create a Namespace object with all the default arguments
     args = argparse.Namespace()
-    
+
     # Set default values based on typical usage
     args.task_name = 'sim_transfer_cube_scripted'
     args.ckpt_dir = 'checkpoints'
@@ -270,7 +270,7 @@ def mock_build_ACT_model_and_optimizer(args_override):
     args.lr = 1e-5
     args.seed = 0
     args.device = 'cpu'
-    
+
     # Additional required args for the model
     args.num_queries = 3
     args.enc_layers = 2
@@ -282,17 +282,17 @@ def mock_build_ACT_model_and_optimizer(args_override):
     args.lr_backbone = 1e-5
     args.weight_decay = 1e-4
     args.camera_names = ['dummy']
-    
+
     # Override with any provided arguments
     for key, value in args_override.items():
         setattr(args, key, value)
-    
+
     # Create a dummy model and optimizer
     state_dim = 1
     action_dim = 1
     model = create_dummy_detrvae(state_dim=state_dim, action_dim=action_dim, num_queries=args.num_queries)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    
+
     return model, optimizer
 
 
@@ -302,21 +302,21 @@ def test_actpolicy_forward_training():
     state_dim = 1
     action_dim = 1
     num_queries = 3
-    
+
     # Replace the build function in ACTPolicy with our mock version
     ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
-    
+
     # Create args with required values
     args = {'num_queries': num_queries, 'kl_weight': 1, 'task_name': 'dummy', 'device': 'cpu'}
-    
+
     policy = ACTPolicy(args)
-    
+
     qpos = torch.randn(batch, state_dim)
     # Fix image dimensions: [batch, num_cam, channel, H, W]
     image = torch.randn(batch, 1, 3, 64, 64)
     actions = torch.randn(batch, 1, action_dim)
     is_pad = torch.zeros(batch, 1, dtype=torch.bool)
-    
+
     loss_dict = policy(qpos, image, actions, is_pad)
     assert 'loss' in loss_dict
     assert 'l1' in loss_dict
@@ -329,18 +329,18 @@ def test_actpolicy_forward_inference():
     state_dim = 1
     action_dim = 1
     num_queries = 3
-    
+
     # Replace the build function in ACTPolicy with our mock version
     ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
-    
+
     # Create args with required values
     args = {'num_queries': num_queries, 'kl_weight': 1, 'task_name': 'dummy', 'device': 'cpu'}
-    
+
     policy = ACTPolicy(args)
     qpos = torch.randn(batch, state_dim)
     # Fix image dimensions: [batch, num_cam, channel, H, W]
     image = torch.randn(batch, 1, 3, 64, 64)
-    
+
     # In inference mode, no actions are provided.
     a_hat = policy(qpos, image)
     # Expecting a_hat to have shape [batch, state_dim]
@@ -355,13 +355,13 @@ def test_cnnmlp_forward_pass():
     image = torch.randn(batch, 1, 3, 64, 64)
     actions = torch.randn(batch, 1, 1)
     is_pad = torch.zeros(batch, 1, dtype=torch.bool)
-    
+
     # Replace the build function in ACTPolicy with our mock version
     ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
-    
+
     # Create args with required values
     args = {'num_queries': 1, 'kl_weight': 1, 'task_name': 'dummy', 'device': 'cpu'}
-    
+
     policy = ACTPolicy(args)
     loss_dict = policy(qpos, image, actions, is_pad)
     assert 'loss' in loss_dict
@@ -390,13 +390,13 @@ def test_normalization():
     qpos = torch.randn(batch, 1)
     # Fix image dimensions: [batch, num_cam, channel, H, W]
     image = torch.ones(batch, 1, 3, 64, 64)   # constant image values
-    
+
     # Replace the build function in ACTPolicy with our mock version
     ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
-    
+
     # Create args with required values
     args = {'num_queries': 3, 'kl_weight': 1, 'task_name': 'dummy', 'device': 'cpu'}
-    
+
     policy = ACTPolicy(args)
     # Apply normalization inside __call__
     _ = policy(qpos, image)
@@ -410,7 +410,7 @@ def test_positional_embedding_alignment():
     # Set num_queries such that encoder input sequence consists of [CLS, qpos, action]
     num_queries = 4
     model = create_dummy_detrvae(state_dim, action_dim, num_queries)
-    
+
     # Assume that the dummy forward pass will use pos_table of shape [1, num_queries, hidden_dim]
     hidden_dim = 512
     assert model.pos_table.shape == (1, num_queries, hidden_dim)
@@ -423,13 +423,13 @@ def test_full_detrvae_integration():
     action_dim = 1
     num_queries = 5
     model = create_dummy_detrvae(state_dim, action_dim, num_queries)
-    
+
     qpos = torch.randn(batch, state_dim)
     image = torch.randn(batch, 1, 3, 64, 64)
     env_state = None
     actions = torch.randn(batch, 1, action_dim)
     is_pad = torch.zeros(batch, 1, dtype=torch.bool)
-    
+
     a_hat, is_pad_hat, (mu, logvar) = model(qpos, image, env_state, actions, is_pad)
     assert a_hat.shape == (batch, state_dim)
 
@@ -440,27 +440,27 @@ class SingleNumberRegression(nn.Module):
         super().__init__()
         self.linear = nn.Linear(1, 1)
 
-    
+
     def forward(self, x):
         return self.linear(x)
-    
-    
+
+
 def test_single_number_regression():
     # Simple regression: y = 2x; train on one example.
     model = SingleNumberRegression()
     optimizer = optim.SGD(model.parameters(), lr=0.1)
     x = torch.tensor([[1.0]])
     target = torch.tensor([[2.0]])
-    
-    
+
+
     for _ in range(200):
         optimizer.zero_grad()
         pred = model(x)
         loss = F.mse_loss(pred, target)
         loss.backward()
         optimizer.step()
-    
-    
+
+
     final_loss = F.mse_loss(model(x), target).item()
     assert final_loss < 0.001
 
@@ -471,22 +471,22 @@ def test_batch_sequence_consistency():
     state_dim = 1
     action_dim = 1
     num_queries = 3
-    
+
     # Replace the build function in ACTPolicy with our mock version
     ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
-    
+
     # Create args with required values
     args = {'num_queries': num_queries, 'kl_weight': 1, 'task_name': 'dummy', 'device': 'cpu'}
-    
+
     policy = ACTPolicy(args)
-    
+
     # Create a dummy actions tensor with an extra sequence dimension (e.g. sequence length 2)
     qpos = torch.randn(batch, state_dim)
     # Fix image dimensions: [batch, num_cam, channel, H, W]
     image = torch.randn(batch, 1, 3, 64, 64)
     actions = torch.randn(batch, 2, action_dim)  # sequence length is 2
     is_pad = torch.zeros(batch, 2, dtype=torch.bool)
-    
+
     loss_dict = policy(qpos, image, actions, is_pad)
     # If no errors occur, the actions have been reduced to match the prediction.
     assert 'loss' in loss_dict
@@ -496,10 +496,10 @@ def test_batch_sequence_consistency():
 def test_optimizer_configuration():
     # Replace the build function in ACTPolicy with our mock version
     ACTPolicy.build_ACT_model_and_optimizer = staticmethod(mock_build_ACT_model_and_optimizer)
-    
+
     # Create args with required values
     args = {'num_queries': 3, 'kl_weight': 1, 'task_name': 'dummy', 'device': 'cpu'}
-    
+
     policy = ACTPolicy(args)
     optimizer = policy.configure_optimizers()
     assert isinstance(optimizer, optim.Optimizer)
@@ -512,13 +512,13 @@ def test_edge_case_inputs():
     action_dim = 1
     num_queries = 3
     model = create_dummy_detrvae(state_dim, action_dim, num_queries)
-    
+
     # Provide qpos with wrong dimensions (missing feature dimension)
     qpos_wrong = torch.randn(batch)  # should be [batch, state_dim]
     image = torch.randn(batch, 1, 3, 64, 64)
     actions = torch.randn(batch, 1, action_dim)
     is_pad = torch.zeros(batch, 1, dtype=torch.bool)
-    
+
     with pytest.raises(Exception):
         _ = model(qpos_wrong, image, None, actions, is_pad)
 
@@ -592,7 +592,7 @@ def test_simple_policy_forward():
   import torch
   import os
   import importlib.util
-  
+
   # Dynamically load the simple_imitate module due to invalid module name
   module_name = "simple_imitate"
   file_path = os.path.join(os.path.dirname(__file__), "../2d_look_at/simple_imitate.py")
