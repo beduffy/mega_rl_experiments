@@ -317,8 +317,10 @@ def train_mouse_policy(args_dict, device='cuda'):
         # Save best checkpoint
         if avg_loss < best_loss:
             best_loss = avg_loss
-            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt')
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', f'mouse_act_policy_best_{timestamp}.ckpt')
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+            print(f"Saving best checkpoint to: {checkpoint_path}")
             torch.save(policy.state_dict(), checkpoint_path)
 
         # Log epoch-level metrics
@@ -343,7 +345,7 @@ def train_mouse_policy(args_dict, device='cuda'):
         all_targets = np.concatenate(all_targets)
         all_preds = np.concatenate(all_preds)
         plot_positions(all_targets, all_preds, epoch)
-        wandb.log({"position_plot": wandb.Image(f'imitate_mouse/plots/epoch_{epoch:04d}.png')})
+        wandb.log({"position_plot": wandb.Image(f'training_plots/targets_vs_predictions_epoch_{epoch:04d}.png')})
 
 
 def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
