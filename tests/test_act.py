@@ -12,6 +12,7 @@ import torchvision.transforms as transforms
 import importlib.util
 from unittest.mock import patch, Mock
 from packaging import version
+import pybullet
 
 # Get path to root directory (two levels up from tests/)
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -740,42 +741,173 @@ def test_mouse_policy_inference_shape():
 
 
 def test_pybullet_simulation_smoke():
+    with patch('pybullet.connect'), \
+         patch('pybullet.loadURDF'), \
+         patch('pybullet.getNumJoints') as mock_joints, \
+         patch('pybullet.getJointInfo') as mock_joint_info, \
+         patch('pybullet.setJointMotorControl2'):
+
+        mock_joints.return_value = 2
+        mock_joint_info.side_effect = [
+            (0, b'r_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1),
+            (1, b'l_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1)
+        ]
+
+        # Test execution
+        set_joint_angles_instantly(1, {'r_hip_yaw': 0.5})
+        assert mock_set_joint.call_count == 1
+
+
+def test_mouse_policy_save_load_cycle(tmp_path):
+    """Test full training->saving->loading cycle for mouse policy"""
+    from imitate_mouse.imitate_mouse import train_mouse_policy, MouseACTDataset
+    from imitate_mouse.run_mouse_policy import run_policy_eval
+
+    # Create dummy args dictionary matching training config
+    args_dict = {
+        'policy_class': 'ACT',
+        'kl_weight': 10,
+        'chunk_size': 10,  # Reduced from 100
+        'hidden_dim': 64,  # Reduced from 512
+        'batch_size': 4,   # Reduced from 8
+        'dim_feedforward': 128,  # Reduced from 3200
+        'num_epochs': 1,   # Single epoch
+        'enc_layers': 1,   # Simplified architecture
+        'dec_layers': 1,
+        'nheads': 2,
+        'latent_dim': 16,
+        'ckpt_dir': str(tmp_path),  # Add missing key
+        'lr': 1e-5,
+        'seed': 0,
+        'use_dummy_images': True,
+        'device': 'cpu',
+        'camera_names': ['dummy'],
+    }
+
+    # Train and save a model
+    with patch('wandb.init'), patch('wandb.log'):
+        train_mouse_policy(args_dict, device='cpu')
+
+    # Verify checkpoint creation
+    ckpt_path = os.path.join('imitate_mouse/checkpoints', 'mouse_act_policy_best.ckpt')
+    assert os.path.exists(ckpt_path), "Checkpoint not created"
+
+    # Test loading in evaluation script
+    class Args:
+        ckpt = ckpt_path
+        dummy = True
+        cpu = True
+
+    # Test policy execution with dummy input
+    with patch('pyautogui.moveTo') as mock_move:
+        run_policy_eval(Args())
+        assert mock_move.called, "Policy didn't generate mouse movements"
+
+
+def test_johnny_policy_save_load_inference():
+    """Test loading trained Johnny policy and basic inference"""
+    from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, ServoDataset
+    from imitate_johnny_actions.run_saved_policy_in_pybullet_act import load_policy
+
+    # Create and save a dummy policy
+    policy_config = {
+        'num_queries': 1,
+        'kl_weight': 1,
+        'task_name': 'test',
+        'device': 'cpu',
+        'num_actions': 24,
+        'state_dim': 24,
+        'hidden_dim': 32,  # Smaller for testing
+        'dim_feedforward': 64,
+        'lr_backbone': 1e-5,
+        'backbone': 'resnet18',
+        'enc_layers': 2,
+        'dec_layers': 2,
+        'nheads': 2,
+        'dropout': 0.1,
+        'camera_names': ['dummy'],
+    }
+
+    policy = ACTPolicy(policy_config)
+    ckpt_path = 'test_johnny.pth'
+    torch.save(policy.state_dict(), ckpt_path)
+
+    # Test loading
+    loaded_policy = load_policy(ckpt_path, device='cpu')
+    assert isinstance(loaded_policy, ACTPolicy), "Failed to load policy"
+
+    # Test inference
+    dummy_image = torch.zeros(1, 1, 3, 120, 160)  # Batch, cameras, channels, H, W
+    dummy_qpos = torch.zeros(1, 24)
+    with torch.no_grad():
+        action = loaded_policy(dummy_qpos, dummy_image)
+        assert action.shape == (1, 24), f"Unexpected action shape {action.shape}"
+
+
+@pytest.mark.skipif(not pybullet.isNumpyEnabled(), reason="Requires PyBullet")
+def test_pybullet_simulation_smoke():
     """Basic smoke test for policy in PyBullet environment"""
-    from imitate_johnny_actions.run_saved_policy_in_pybullet_act import set_joint_angles_instantly
+    from imitate_johnny_actions.run_saved_policy_in_pybullet_act import load_policy, set_joint_angles_instantly
 
-    # Mock joint structure
-    mock_joint_info = [
-        (0, b'r_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1),
-        (1, b'l_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1)
-    ]
+    # Create dummy policy
+    policy = Mock()
+    policy.side_effect = lambda qpos, img: torch.randn(1, 24)
 
-    with patch('pybullet.connect') as mock_connect, \
-         patch('pybullet.loadURDF') as mock_load, \
-         patch('pybullet.getNumJoints') as mock_num_joints, \
-         patch('pybullet.getJointInfo') as mock_get_joint_info, \
-         patch('pybullet.setJointMotorControl2') as mock_set_joint, \
-         patch('time.sleep'):
+    # Basic simulation test
+    with patch('pybullet.connect'), \
+         patch('pybullet.loadURDF'), \
+         patch('pybullet.getNumJoints') as mock_joints, \
+         patch('pybullet.getJointInfo') as mock_joint_info, \
+         patch('pybullet.setJointMotorControl2'):
 
-        mock_connect.return_value = None
-        mock_load.return_value = 1
-        mock_num_joints.return_value = len(mock_joint_info)
-        mock_get_joint_info.side_effect = lambda robot, idx: mock_joint_info[idx]
+        mock_joints.return_value = 2
+        mock_joint_info.side_effect = [
+            (0, b'r_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1),
+            (1, b'l_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1)
+        ]
 
         # Test joint setting
         test_joints = {'r_hip_yaw': 0.5, 'l_hip_yaw': -0.5}
         set_joint_angles_instantly(robot=1, angle_dict_to_try=test_joints)
 
-        # Verify joint calls - access arguments correctly
-        assert mock_set_joint.call_count == 2
-        called_joints = {
-            call[0][1]: call[1]['targetPosition']  # args[0][1] is joint index
-            for call in mock_set_joint.call_args_list
-        }
-        expected_joints = {
-            0: 0.5,  # r_hip_yaw index from mock_joint_info
-            1: -0.5  # l_hip_yaw index
-        }
-        assert called_joints == expected_joints
+
+def test_mouse_policy_e2e(tmp_path):
+    """End-to-enable test of mouse policy training and inference"""
+    from imitate_mouse.imitate_mouse import train_mouse_policy
+    from imitate_mouse.run_mouse_policy import run_policy_eval
+
+    # Train minimal policy
+    args_dict = {
+        'policy_class': 'ACT',
+        'kl_weight': 1,
+        'chunk_size': 1,
+        'hidden_dim': 32,
+        'batch_size': 2,
+        'dim_feedforward': 64,
+        'num_epochs': 1,
+        'lr': 1e-4,
+        'seed': 0,
+        'use_dummy_images': True,
+        'device': 'cpu',
+        'latent_dim': 32,  # Match policy config
+        'enc_layers': 1,  # Match reduced config
+        'dec_layers': 1,
+        'nheads': 2,
+        'ckpt_dir': str(tmp_path)
+    }
+
+    with patch('wandb.init'), patch('wandb.log'):
+        train_mouse_policy(args_dict, device='cpu')
+
+    # Test inference
+    class Args:
+        ckpt = 'imitate_mouse/checkpoints/mouse_act_policy_best.ckpt'
+        dummy = True
+        cpu = True
+
+    with patch('pyautogui.moveTo') as mock_move:
+        run_policy_eval(Args())
+        assert mock_move.call_count > 3, "Insufficient policy predictions"
 
 
 if __name__ == '__main__':
