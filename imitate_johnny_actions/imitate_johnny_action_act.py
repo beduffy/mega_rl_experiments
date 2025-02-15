@@ -325,3 +325,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+"""
+python imitate_johnny_actions/imitate_johnny_action_act.py --device cuda
+"""

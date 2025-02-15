@@ -295,13 +295,15 @@ def train_mouse_policy(args_dict, device='cuda'):
         # Save best checkpoint
         if avg_loss < best_loss:
             # Save both model and config
-            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt')
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', f'mouse_act_policy_best_{timestamp}.ckpt')
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             torch.save({
                 'model_state': policy.state_dict(),
                 'config': policy_config,
                 'training_args': args_dict
             }, checkpoint_path)
+            print(f"Saved checkpoint to: {checkpoint_path}")
 
         # Log epoch-level metrics
         wandb.log({
