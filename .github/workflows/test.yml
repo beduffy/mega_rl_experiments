@@ -9,17 +9,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-20.04
-    # strategy:
-    #   matrix:
-    #     python-version: ["3.8", "3.9", "3.10"]  # Test multiple Python versions
+    strategy:
+      matrix:
+        python-version: ["3.8"]  # Reduced to just 3.8 since that's your target version
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python 3.8
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
-        python-version: 3.8
+        python-version: ${{ matrix.python-version }}
 
     - name: Cache pip packages
       uses: actions/cache@v3
@@ -32,8 +32,10 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # Install PyTorch first
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip install -r requirements.txt
-        pip install pytest pytest-cov coverage-badge mypy flake8 black isort
+        pip install pytest pytest-cov coverage-badge mypy flake8 black isort pre-commit
 
     - name: Run pre-commit
       run: |
