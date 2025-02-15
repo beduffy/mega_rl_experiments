@@ -141,11 +141,19 @@ if __name__ == "__main__":
         if current_time - last_control_time > control_interval or not action_buffer:
             start_time = time.time()
             with torch.no_grad():
-                # ACTPolicy expects (qpos, image) order
-                action_sequence = policy(qpos, image).cpu().numpy()[0]  # Pass tensor directly
+                action_output = policy(qpos, image)
+                print(f"Raw policy output shape: {action_output.shape}")  # Debug shape
+                action_sequence = action_output.cpu().numpy()
+                print(f"Action sequence shape: {action_sequence.shape}")  # Debug shape
+
+                # Handle different output dimensions
+                if action_sequence.ndim == 3:  # [batch, num_queries, action_dim]
+                    action_buffer = list(action_sequence[0])  # Take first batch
+                else:  # Assume [batch, action_dim]
+                    action_buffer = [action_sequence[0]]  # Single action
+
             inference_time = time.time() - start_time
             print(f"Policy inference took: {inference_time:.3f}s")
-            action_buffer = list(action_sequence)
             last_control_time = current_time
 
         # TODO see how slow CNN is. profile. Also check GPU and stuff or?
@@ -153,8 +161,9 @@ if __name__ == "__main__":
 
         # Get current action from buffer
         if action_buffer:
-            joint_targets = {name: action_buffer[0][i] for i, name in enumerate(JOINT_ORDER)}
-            action_buffer = action_buffer[1:]  # Move to next action in sequence
+            current_action = action_buffer.pop(0)
+            print(f"Current action shape: {current_action.shape}")  # Debug shape
+            joint_targets = {name: current_action[i] for i, name in enumerate(JOINT_ORDER)}
 
         # Apply to simulation
         set_joint_angles_instantly(robot, joint_targets)
