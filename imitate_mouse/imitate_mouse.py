@@ -36,18 +36,18 @@ class MouseRecorder:
         self.use_dummy = use_dummy
         self.dummy_size = (64, 64)  # Smaller dummy images
         self.dummy_pos = (960, 540)  # Center position for dummy mode
-        
+
     def start_recording(self):
         self.recording = True
         self.data = {'images': [], 'positions': [], 'timestamps': []}
-        
+
     def stop_recording(self):
         self.recording = False
-        
+
     def capture_frame(self):
         if not self.recording:
             return
-            
+
         if self.use_dummy:
             img = np.zeros((*self.dummy_size, 3), dtype=np.uint8)
             pos = self.dummy_pos
@@ -62,7 +62,7 @@ class MouseRecorder:
 
         # Store in history
         self.history.append(img)
-        
+
         # Only save when history is full
         if len(self.history) == self.history.maxlen:
             self.data['images'].append(np.stack(self.history))
@@ -77,9 +77,9 @@ def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False)
             center_x, center_y = pyautogui.position()
             recorder = MouseRecorder(use_dummy=use_dummy)
             recorder.start_recording()
-            
+
             start_time = time.time()
-            
+
             try:
                 while time.time() - start_time < duration:
                     angle = (time.time() - start_time) * speed
@@ -100,11 +100,11 @@ class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
         # Add resize transform
         self.resize = transforms.Resize((image_size, image_size))
-        
+
         # Fix dummy image dimensions
         if isinstance(recordings['images'], np.ndarray) and recordings['images'].dtype == np.float64:
             recordings['images'] = recordings['images'].astype(np.float32)
-            
+
         self.images = torch.stack([
             self.resize(torch.tensor(img).float().permute(0, 3, 1, 2))  # Now using defined resize
             for img in recordings['images']
@@ -112,13 +112,13 @@ class MouseACTDataset(Dataset):
         self.positions = torch.tensor(recordings['positions'], dtype=torch.float32)
         self.positions[:, 0] /= screen_size[0]  # Normalize X
         self.positions[:, 1] /= screen_size[1]  # Normalize Y
-        
+
         # Use normalized mouse positions as the qpos (2D state) instead of a 14-dim dummy.
         self.qpos = self.positions.clone()
-        
+
     def __len__(self):
         return len(self.images)
-    
+
     def __getitem__(self, idx):
         frames = self.images[idx]
         return frames, self.qpos[idx], self.positions[idx], torch.zeros(1, dtype=torch.bool)
@@ -141,19 +141,19 @@ def train_mouse_policy(args_dict, device='cuda'):
             "use_dummy": args_dict.get('use_dummy_images', False)
         }
     )
-    
+
     # Generate complete dummy dataset if needed
     if args_dict.get('use_dummy_images'):
         num_samples = 1000
         timesteps = 3
         radius = 0.4  # Relative to screen size
-        
+
         # Generate circular positions
         angles = np.linspace(0, 2*np.pi, num_samples)
         positions = np.zeros((num_samples, 2))
         positions[:, 0] = 0.5 + radius * np.cos(angles)  # X coordinates
         positions[:, 1] = 0.5 + radius * np.sin(angles)  # Y coordinates
-        
+
         recordings = {
             'images': np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8),
             'positions': positions.astype(np.float32)
@@ -162,16 +162,16 @@ def train_mouse_policy(args_dict, device='cuda'):
         # Original loading code
         with h5py.File('mouse_demo.hdf5', 'r') as f:
             recordings = {'images': f['images'][:], 'positions': f['positions'][:]}
-    
+
     # Optional: Replace with black frames
     if args_dict.get('use_dummy_images'):
         # Create dummy data with correct dimensions (num_samples, timesteps, height, width, channels)
         dummy_images = np.zeros((len(recordings['images']), 3, 64, 64, 3), dtype=np.uint8)  # 3 timesteps
         recordings['images'] = dummy_images
-    
+
     dataset = MouseACTDataset(recordings)
     loader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=2, persistent_workers=True)
-    
+
     # ACT policy config
     policy_config = {
         'num_queries': args_dict['chunk_size'],
@@ -189,10 +189,10 @@ def train_mouse_policy(args_dict, device='cuda'):
         'latent_dim': 32,
         'device': device
     }
-    
+
     policy = ACTPolicy(policy_config).to(device)
     optimizer = policy.configure_optimizers()
-    
+
     # Training loop adapted from imitate_episodes.py
     best_loss = float('inf')
     for epoch in range(args_dict['num_epochs']):
@@ -200,20 +200,20 @@ def train_mouse_policy(args_dict, device='cuda'):
         total_loss = 0
         total_x_error = 0.0
         total_y_error = 0.0
-        
+
         epoch_start = time.time()
-        
+
         progress = tqdm(loader, desc=f'Epoch {epoch}', unit='batch')
         for batch_idx, (images, qpos, actions, is_pad) in enumerate(progress):
             images = images.to(device)
             qpos = qpos.to(device)
             actions = actions.to(device)
             is_pad = is_pad.to(device)
-            
+
             # Forward pass
             loss_dict = policy(qpos, images, actions, is_pad)
             loss = loss_dict['loss']
-            
+
             # Accumulate errors
             with torch.no_grad():
                 # Get action predictions directly from model's forward pass
@@ -224,21 +224,21 @@ def train_mouse_policy(args_dict, device='cuda'):
                 y_error = torch.abs(pred_denorm[:,1] - target_denorm[:,1]).mean().item()
                 total_x_error += x_error * images.size(0)
                 total_y_error += y_error * images.size(0)
-            
+
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             total_loss += loss.item()
-            
+
             # Update progress bar
             progress.set_postfix({
                 'loss': f'{loss.item():.4f}',
                 'x_err': f'{x_error:.4f}',
                 'y_err': f'{y_error:.4f}'
             })
-            
+
             # Enhanced logging
             wandb.log({
                 "loss": loss.item(),
@@ -256,27 +256,27 @@ def train_mouse_policy(args_dict, device='cuda'):
 
             # Inside training loop once per epoch
             # wandb.log({"sample_images": [wandb.Image(img) for img in images[0].cpu().numpy()]})
-        
+
         epoch_time = time.time() - epoch_start
-        
+
         # Print diagnostics with 8 decimal places
         avg_loss = total_loss / len(loader)
         avg_x_error = total_x_error / len(dataset)
         avg_y_error = total_y_error / len(dataset)
         print(f'\nEpoch {epoch} Loss: {avg_loss:.8f} (took {epoch_time:.2f}s)')
         print(f'X Error: {avg_x_error:.8f}px | Y Error: {avg_y_error:.8f}px')
-        
+
         # Print sample predictions
         with torch.no_grad():
             sample_images, sample_qpos, sample_actions, sample_is_pad = next(iter(loader))
             sample_images = sample_images.to(device)
             sample_qpos = sample_qpos.to(device)
-            
+
             # Direct model call for inference
             a_hat, _, _ = policy.model(sample_qpos, sample_images, env_state=None)
             sample_pred = a_hat.cpu()
             sample_target = sample_actions.cpu()
-            
+
             print("\nSample predictions vs targets:")
             for i in range(3):  # First 3 samples
                 pred_x, pred_y = sample_pred[i].numpy()
@@ -311,7 +311,7 @@ def train_mouse_policy(args_dict, device='cuda'):
                 preds = policy(qpos, images).cpu().numpy()
                 all_targets.append(actions.numpy())
                 all_preds.append(preds)
-        
+
         all_targets = np.concatenate(all_targets)
         all_preds = np.concatenate(all_preds)
         plot_positions(all_targets, all_preds, epoch)
@@ -322,25 +322,25 @@ def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
     """Plot target vs predicted positions for the epoch"""
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111)
-    
+
     # Convert normalized to screen coordinates
     targs_denorm = targets * screen_size
     preds_denorm = preds * screen_size
-    
+
     # Plot with color indicating sequence progress
-    scatter = ax.scatter(targs_denorm[:,0], targs_denorm[:,1], 
+    scatter = ax.scatter(targs_denorm[:,0], targs_denorm[:,1],
                         c=np.arange(len(targs_denorm)), cmap='viridis',
                         alpha=0.3, label='Targets')
-    ax.scatter(preds_denorm[:,0], preds_denorm[:,1], 
+    ax.scatter(preds_denorm[:,0], preds_denorm[:,1],
                c=np.arange(len(preds_denorm)), cmap='viridis',
                marker='x', alpha=0.3, label='Predictions')
-    
+
     ax.set_xlim(0, screen_size[0])
     ax.set_ylim(0, screen_size[1])
     ax.set_title(f'Epoch {epoch} - Mouse Positions')
     ax.legend()
     plt.colorbar(scatter, label='Sequence Progress')
-    
+
     # Save without displaying
     os.makedirs('training_plots', exist_ok=True)
     plt.savefig(f'training_plots/epoch_{epoch:04d}.png')
@@ -371,7 +371,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, required=True, help='Random seed')
     parser.add_argument('--use_dummy_images', action='store_true', help='Use dummy images for training')
     args = parser.parse_args(remaining_args)
-    
+
     # Pass args to training
     train_mouse_policy(
         args_dict=vars(args),
