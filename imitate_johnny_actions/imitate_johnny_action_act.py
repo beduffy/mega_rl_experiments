@@ -23,7 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 
 # Instead of defining SequencePolicy, we use ACTPolicy
 from act_relevant_files.policy import ACTPolicy
-from .run_saved_policy_in_pybullet_act import set_joint_angles_instantly, get_dummy_image
+from .pybullet_utils import set_joint_angles_instantly, get_dummy_image
 
 
 # Instead of using dataset directly, let's define constants
