@@ -172,15 +172,15 @@ def train_mouse_policy(args_dict, device='cuda'):
         cv2.circle(dummy_image, center, radius, (255, 255, 255), -1)
         cv2.imwrite('imitate_mouse/plots/dummy_image.jpg', dummy_image)
 
-        # Plot positions to verify circular pattern
-        plt.figure(figsize=(10, 10))
-        plt.scatter(positions[:, 0] * 64, positions[:, 1] * 64, alpha=0.5)
-        plt.title('Mouse Target Positions (in pixels)')
-        plt.xlabel('X Position (pixels)')
-        plt.ylabel('Y Position (pixels)')
-        plt.grid(True)
-        plt.savefig('imitate_mouse/plots/target_positions.jpg')
-        plt.close()
+        # Only plot if not in test mode
+        if not os.environ.get('PYTEST_CURRENT_TEST'):
+            plt.figure(figsize=(10, 5))
+            plt.scatter(positions[:, 0], positions[:, 1], s=1)
+            plt.title('Dummy Target Positions')
+            plt.xlim(0, 1)
+            plt.ylim(0, 1)
+            plt.savefig('imitate_mouse/plots/target_positions.jpg')
+            plt.close()
 
         # Create recordings with the dummy image repeated
         recordings = {
@@ -209,13 +209,13 @@ def train_mouse_policy(args_dict, device='cuda'):
         'dim_feedforward': args_dict['dim_feedforward'],
         'lr_backbone': 1e-5,
         'backbone': 'resnet18',
-        'enc_layers': 4,
-        'dec_layers': 7,
-        'nheads': 8,
-        'camera_names': ['mouse_cam'],
+        'enc_layers': args_dict['enc_layers'],
+        'dec_layers': args_dict['dec_layers'],
+        'nheads': args_dict['nheads'],
+        'camera_names': args_dict['camera_names'],
         'num_actions': 2,
         'state_dim': 2,
-        'latent_dim': 32,
+        'latent_dim': args_dict.get('latent_dim', 32),
         'device': device
     }
 
