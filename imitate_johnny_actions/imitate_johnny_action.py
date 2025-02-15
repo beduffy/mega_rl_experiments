@@ -22,7 +22,7 @@ class SequencePolicy(nn.Module):
             nn.ReLU(),
             nn.Flatten(),
         )
-        
+
         # Expanded MLP for multi-step prediction
         self.pred_steps = pred_steps
         combined_dim = 32*59*59 + qpos_dim
@@ -33,7 +33,7 @@ class SequencePolicy(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 24 * pred_steps)  # Output 24 * pred_steps joint angles
         )
-        
+
         self.use_qpos = use_qpos
         self.joint_order = [
             'r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll',
@@ -42,7 +42,7 @@ class SequencePolicy(nn.Module):
             'r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper',
             'l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'
         ]
-    
+
     def forward(self, images, qpos=None):
         x = self.conv(images)
         if self.use_qpos and qpos is not None:
@@ -86,12 +86,12 @@ class ServoDataset(Dataset):
     def __init__(self, action_sequences, num_samples=1000, window_size=3, image_size=240):
         # Convert each sequence from list of dicts to list of tensors
         self.action_sequences = [
-            [self.dict_to_tensor(step) for step in seq] 
+            [self.dict_to_tensor(step) for step in seq]
             for seq in action_sequences
         ]
         self.window_size = window_size
         self.images = torch.rand(num_samples, 3, image_size, image_size)
-        
+
         # Create sequence targets with proper windowing
         self.targets = []
         for _ in range(num_samples):
@@ -100,13 +100,13 @@ class ServoDataset(Dataset):
             start = np.random.randint(0, len(seq) - self.window_size + 1)
             window = seq[start:start + self.window_size]
             self.targets.append(torch.stack(window))
-        
+
     def dict_to_tensor(self, action_dict):
         return torch.tensor([
             action_dict.get(name, 0.0)  # Use 0.0 as default for missing joints
             for name in JOINT_ORDER
         ], dtype=torch.float32)
-    
+
     def __len__(self):
         return len(self.images)
 
@@ -119,51 +119,51 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     criterion = nn.MSELoss()
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
+
     for epoch in range(num_epochs):
         policy.train()
         total_loss = 0  # Reset each epoch
         joint_errors = {name: 0.0 for name in JOINT_ORDER}
-        
+
         for batch_idx, (images, qpos, targets) in enumerate(train_loader):
             images = images.to(device)
             qpos = qpos.to(device)
             targets = targets.to(device)
-            
+
             # Predict sequence: (B, T, 24)
             preds = policy(images, qpos)
-            
+
             # Calculate loss
             loss = criterion(preds, targets)
-            
+
             # Backprop
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             # Accumulate loss
             total_loss += loss.item()
-            
+
             # Calculate per-joint errors
             with torch.no_grad():
                 errors = torch.abs(preds - targets).mean(dim=(0,1))  # Average over batch and time
                 for i, name in enumerate(JOINT_ORDER):
                     joint_errors[name] += errors[i].item()
-        
+
         # Save checkpoint every 10 epochs
         if epoch % 10 == 0:
             ckpt_path = f'checkpoints/policy_epoch{epoch}_{timestamp}.pth'
             torch.save(policy.state_dict(), ckpt_path)
-        
+
         # Print diagnostics
         avg_loss = total_loss / len(train_loader)
         print(f'Epoch {epoch}: Loss: {avg_loss:.6f}')  # Changed to .6f for decimal format
-        
+
         # Print sample predictions
         with torch.no_grad():
             sample_img, sample_qpos, sample_target = next(iter(train_loader))
             sample_pred = policy(sample_img[:1].to(device), sample_qpos[:1].to(device))
-            
+
             print("\nSample prediction vs target (first and last timesteps):")
             for j in range(5):  # First 5 joints
                 name = JOINT_ORDER[j]
@@ -192,23 +192,23 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-4,
                       help='Learning rate')
     parser.add_argument('--device', type=str, default='cpu',
-                      choices=['cpu', 'cuda'], 
+                      choices=['cpu', 'cuda'],
                       help='Device to train on (cpu or cuda)')
     args = parser.parse_args()
-    
+
     # Set device
     device = torch.device(args.device)
     print(f"Training on {device}")
-    
+
     # Create synthetic dataset
     greet_sequences = [all_greet_action_lines]  # Can add more sequences
     dataset = ServoDataset(action_sequences=greet_sequences, num_samples=1000)
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-    
+
     # Create and train policy
     policy = SequencePolicy(image_size=240, use_qpos=True, qpos_dim=24, pred_steps=3).to(device)
     train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device)
-    
+
     # Save trained policy with timestamp and epochs
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     save_path = f'servo_policy_24dof_{timestamp}_ep{args.num_epochs}.pth'

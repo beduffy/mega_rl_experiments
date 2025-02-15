@@ -60,12 +60,12 @@ class ServoDataset(Dataset):
                  use_real_images=False):
         # Convert each sequence from list of dicts to list of tensors
         self.action_sequences = [
-            [self.dict_to_tensor(step) for step in seq] 
+            [self.dict_to_tensor(step) for step in seq]
             for seq in action_sequences
         ]
         self.window_size = window_size
         self.images = torch.rand(num_samples, 3, image_size, image_size) if use_real_images else torch.zeros(num_samples, 3, image_size, image_size)
-        
+
         # Create sequence targets with proper windowing
         self.targets = []
         for _ in range(num_samples):
@@ -74,7 +74,7 @@ class ServoDataset(Dataset):
             start = np.random.randint(0, len(seq) - self.window_size + 1)
             window = seq[start:start + self.window_size]
             self.targets.append(torch.stack(window))
-        
+
         # Add data augmentation configuration
         self.use_real_images = use_real_images
         self.augment = transforms.Compose([
@@ -82,34 +82,34 @@ class ServoDataset(Dataset):
             transforms.RandomAdjustSharpness(2, p=0.3),
             transforms.ColorJitter(brightness=0.2, contrast=0.2)
         ])
-        
+
     def dict_to_tensor(self, action_dict):
         return torch.tensor([
             action_dict.get(name, 0.0)  # Use 0.0 as default for missing joints
             for name in JOINT_ORDER
         ], dtype=torch.float32)
-    
+
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
         """Returns a single sample from the dataset.
-        
+
         For temporal dataset, consecutive indices represent temporal sequence:
         idx:     0  1  2  3  4  5  6  7  8  9 ...
         target:  1  2  3  4  5  6  7  8  9  8 ...
         """
         image = self.images[idx]
-        
+
         # Only apply augmentations if image isn't black or allowed explicitly
         if not self.use_real_images and torch.all(image == 0):
             pass  # Skip augmentation for black images
         else:
             image = self.augment(image)
-            
+
         # Check image tensor dimensions before conversion
         # print(f"Input image shape: {image.shape}")  # Should be [batch, channels, H, W]
-        
+
         return image, torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
 
 
@@ -120,26 +120,26 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
     loss_weights = torch.ones(24)
     loss_weights[[
         JOINT_ORDER.index('r_hip_yaw'),
-        JOINT_ORDER.index('r_ank_pitch'), 
+        JOINT_ORDER.index('r_ank_pitch'),
         JOINT_ORDER.index('r_el_yaw')
     ]] = 2.0
     criterion = nn.SmoothL1Loss(reduction='none')  # Remove weight parameter
     best_loss = float('inf')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
+
     # Add learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, 'min', patience=3, factor=0.3, verbose=True
     )
 
     total_start_time = time.time()
-    
+
     for epoch in range(num_epochs):
         epoch_start_time = time.time()
         policy.train()
         total_loss = 0  # Reset each epoch
         joint_errors = {name: 0.0 for name in JOINT_ORDER}
-        
+
         for batch_idx, (images, qpos, targets) in enumerate(train_loader):
             images = images.to(device)
             qpos = qpos.to(device)
@@ -152,46 +152,46 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 images = images.repeat(1, 3, 1, 1)
             elif images.shape[1] > 3:  # Handle feature maps
                 images = images[:, :3]  # Take first 3 channels
-            
+
             # For ACTPolicy, ensure proper image dimensions (B, C, H, W)
             with torch.cuda.amp.autocast():
                 preds = policy(qpos, images)
                 loss = (criterion(preds, targets) * loss_weights.to(device)).mean()  # Compare full sequence
-            
+
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
             optimizer.step()
-            
+
             total_loss += loss.item()
-            
+
             # Calculate per-joint errors
             with torch.no_grad():
                 errors = torch.abs(preds - targets).mean(dim=0)  # Average over batch
                 for i, name in enumerate(JOINT_ORDER):
                     joint_errors[name] += errors[i].item()
-            
+
             # Log batch metrics
             wandb.log({
                 "batch_loss": loss.item(),
                 "learning_rate": optimizer.param_groups[0]['lr'],
                 "epoch_progress": epoch + (batch_idx+1)/len(train_loader)
             })
-        
+
         # Save checkpoint every 10 epochs
         if epoch % 10 == 0:
             if not os.path.exists('checkpoints'):
                 os.makedirs('checkpoints', exist_ok=True)  # Create directory if needed
             ckpt_path = os.path.join('checkpoints', f'policy_epoch{epoch}_{timestamp}.pth')
             torch.save(policy.state_dict(), ckpt_path)
-        
+
         # Update learning rate
         scheduler.step(total_loss / len(train_loader))
-        
+
         # Print diagnostics - modified to show problematic joints
         avg_loss = total_loss / len(train_loader)
         print(f'\nEpoch {epoch}: Loss: {avg_loss:.6f}')
-        
+
         # Print per-joint errors
         print("\nAverage Joint Errors:")
         for name in JOINT_ORDER[:5] + ['r_el_yaw', 'l_el_yaw']:  # Focus on key problem joints
@@ -215,11 +215,11 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
                 sample_img = sample_img.repeat(1, 1, 3, 1, 1)
             sample_pred = preds[0,0,:].cpu()  # (24,)
             sample_target = targets[0,0,:].cpu()
-            
+
             # Denormalize before logging
             sample_pred_denorm = denormalize(sample_pred)
             sample_target_denorm = denormalize(sample_target)
-            
+
             # Log denormalized values
             print("\nSample prediction vs target (DENORMALIZED):")
             for i, name in enumerate(JOINT_ORDER[:5] + ['r_el_yaw', 'l_el_yaw']):
@@ -240,7 +240,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         epoch_time = time.time() - epoch_start_time
         mins, secs = divmod(epoch_time, 60)
         print(f'Epoch {epoch} took: {int(mins)}m {secs:.1f}s | Loss: {avg_loss:.7f}')
-    
+
     total_time = time.time() - total_start_time
     hours, rem = divmod(total_time, 3600)
     mins, secs = divmod(rem, 60)
@@ -258,18 +258,18 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-4,
                       help='Learning rate')
     parser.add_argument('--device', type=str, default='cpu',
-                      choices=['cpu', 'cuda'], 
+                      choices=['cpu', 'cuda'],
                       help='Device to train on (cpu or cuda)')
     parser.add_argument('--use_real_images', action='store_true',
                       help='Use real images instead of black, enables augmentation')
     parser.add_argument('--wandb_project', type=str, default='imitate_johnny_act',
                       help='Weights & Biases project name')
     args = parser.parse_args()
-    
+
     # Set device
     device = torch.device(args.device)
     print(f"Training on {device}")
-    
+
     # Create synthetic dataset
     greet_sequences = [all_greet_action_lines]  # Can add more sequences
     dataset = ServoDataset(
@@ -279,7 +279,7 @@ def main():
         window_size=5
     )
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-    
+
     # Configure ACTPolicy to mimic the original SequencePolicy behavior
     policy_config = {
         'num_queries': 1,
@@ -298,9 +298,9 @@ def main():
         'dropout': 0.1,
         'camera_names': ['dummy'],
     }
-    
+
     policy = ACTPolicy(policy_config).to(device)
-    
+
     # Initialize WandB
     wandb.init(
         project=args.wandb_project,
@@ -314,9 +314,9 @@ def main():
             "use_real_images": args.use_real_images
         }
     )
-    
+
     train(policy, train_loader, num_epochs=args.num_epochs, lr=args.lr, device=device)
-    
+
     # Save trained policy with timestamp and epochs
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     save_path = f'servo_policy_24dof_{timestamp}_ep{args.num_epochs}.pth'
@@ -324,4 +324,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main() 
+    main()
