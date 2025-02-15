@@ -5,32 +5,31 @@ import numpy as np
 import torch
 import pyautogui
 
-from imitate_mouse import MouseRecorder, ACTPolicy
+from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 
 
 def run_policy_eval(args):
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
 
-    # Hardcoded policy config matching training parameters
-    policy_config = {
-        "num_queries": 100,  # Should match --chunk_size from training
-        "hidden_dim": 512,
-        "dim_feedforward": 3200,
-        "lr_backbone": 1e-5,
-        "backbone": "resnet18",
-        "enc_layers": 4,
-        "dec_layers": 7,
-        "nheads": 8,
-        "camera_names": ["mouse_cam"],
-        "kl_weight": 10,
-        "num_actions": 2,
-        "state_dim": 2,
-        "latent_dim": 32,  # Add latent_dim to match training config
-        "device": device,
-    }
+    # Load checkpoint with proper error handling
+    try:
+        checkpoint = torch.load(args.ckpt, map_location=device, weights_only=True)
+    except Exception as e:
+        raise ValueError(f"Failed to load checkpoint {args.ckpt}: {str(e)}") from e
+
+    # Use config from checkpoint instead of hardcoding
+    policy_config = checkpoint['config']
+    policy_config['device'] = device  # Update device in case of cross-device loading
 
     policy = ACTPolicy(policy_config).to(device)
     policy.load_state_dict(torch.load(args.ckpt, map_location=device), strict=False)
+
+
+    # TODO add below after new training run since I'm adding config to save
+    # checkpoint = torch.load(args.ckpt, map_location=device)
+    # policy = ACTPolicy(checkpoint['config']).to(device)
+    # policy.load_state_dict(checkpoint['model_state'])
+
     policy.eval()
 
     recorder = MouseRecorder()
