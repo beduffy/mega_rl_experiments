@@ -767,21 +767,21 @@ def test_mouse_policy_save_load_cycle(tmp_path):
     args_dict = {
         'policy_class': 'ACT',
         'kl_weight': 10,
-        'chunk_size': 10,  # Reduced from 100
-        'hidden_dim': 64,  # Reduced from 512
-        'batch_size': 4,   # Reduced from 8
-        'dim_feedforward': 128,  # Reduced from 3200
-        'num_epochs': 1,   # Single epoch
-        'enc_layers': 1,   # Simplified architecture
-        'dec_layers': 1,
-        'nheads': 2,
-        'latent_dim': 16,
-        'ckpt_dir': str(tmp_path),  # Add missing key
+        'chunk_size': 10,
+        'hidden_dim': 64,
+        'batch_size': 4,
+        'dim_feedforward': 128,
+        'num_epochs': 1,
         'lr': 1e-5,
         'seed': 0,
         'use_dummy_images': True,
         'device': 'cpu',
-        'camera_names': ['dummy'],
+        'enc_layers': 1,
+        'dec_layers': 1,
+        'nheads': 2,
+        'latent_dim': 32,
+        'camera_names': ['mouse_cam'],
+        'ckpt_dir': str(tmp_path)
     }
 
     # Train and save a model
@@ -806,7 +806,8 @@ def test_mouse_policy_save_load_cycle(tmp_path):
 
 def test_johnny_policy_save_load_inference():
     """Test loading trained Johnny policy and basic inference"""
-    from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, ServoDataset
+    from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy
+    from imitate_johnny_actions.pybullet_utils import set_joint_angles_instantly
     from imitate_johnny_actions.run_saved_policy_in_pybullet_act import load_policy
 
     # Create and save a dummy policy
@@ -830,7 +831,10 @@ def test_johnny_policy_save_load_inference():
 
     policy = ACTPolicy(policy_config)
     ckpt_path = 'test_johnny.pth'
-    torch.save(policy.state_dict(), ckpt_path)
+    torch.save({
+        'model_state': policy.state_dict(),
+        'config': policy_config
+    }, ckpt_path)
 
     # Test loading
     loaded_policy = load_policy(ckpt_path, device='cpu')
@@ -847,7 +851,8 @@ def test_johnny_policy_save_load_inference():
 @pytest.mark.skipif(not pybullet.isNumpyEnabled(), reason="Requires PyBullet")
 def test_pybullet_simulation_smoke():
     """Basic smoke test for policy in PyBullet environment"""
-    from imitate_johnny_actions.run_saved_policy_in_pybullet_act import load_policy, set_joint_angles_instantly
+    from imitate_johnny_actions.pybullet_utils import set_joint_angles_instantly
+    from imitate_johnny_actions.run_saved_policy_in_pybullet_act import load_policy
 
     # Create dummy policy
     policy = Mock()
