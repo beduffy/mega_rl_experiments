@@ -63,5 +63,9 @@ jobs:
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         file: ./coverage.xml
-        fail_ci_if_error: true
+        flags: unittests
+        name: codecov-ainex
+        fail_ci_if_error: true  # Enable this to catch upload issues
+        verbose: true  # Add verbose output for debugging
