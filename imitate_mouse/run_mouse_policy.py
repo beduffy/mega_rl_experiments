@@ -21,16 +21,19 @@ def run_policy_eval(args):
     policy_config = checkpoint['config']
     policy_config['device'] = device  # Update device in case of cross-device loading
 
-    policy = ACTPolicy(policy_config).to(device)
-    policy.load_state_dict(torch.load(args.ckpt, map_location=device), strict=False)
-
-
+    # DO NOT REMOVE THESE COMMITS
+    # policy = ACTPolicy(policy_config).to(device)
+    # policy.load_state_dict(torch.load(args.ckpt, map_location=device), strict=False)
     # TODO add below after new training run since I'm adding config to save
     # checkpoint = torch.load(args.ckpt, map_location=device)
     # policy = ACTPolicy(checkpoint['config']).to(device)
     # policy.load_state_dict(checkpoint['model_state'])
 
+     # Create policy from saved config
+    policy = ACTPolicy(checkpoint['config'])
+    policy.load_state_dict(checkpoint['model_state_dict'])
     policy.eval()
+    policy.to(device)
 
     recorder = MouseRecorder()
     recorder.start_recording()
