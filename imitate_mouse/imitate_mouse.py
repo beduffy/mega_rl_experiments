@@ -14,6 +14,8 @@ from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import wandb
+import matplotlib
+matplotlib.use('Agg')  # Add as very first import
 import matplotlib.pyplot as plt
 
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -173,7 +175,7 @@ def train_mouse_policy(args_dict, device='cuda'):
         cv2.imwrite('imitate_mouse/plots/dummy_image.jpg', dummy_image)
 
         # Only plot if not in test mode
-        if not os.environ.get('PYTEST_CURRENT_TEST'):
+        if not os.environ.get('PYTEST_CURRENT_TEST') and not os.environ.get('DISABLE_PLOTS'):
             plt.figure(figsize=(10, 5))
             plt.scatter(positions[:, 0], positions[:, 1], s=1)
             plt.title('Dummy Target Positions')
@@ -350,11 +352,19 @@ def train_mouse_policy(args_dict, device='cuda'):
                 checkpoint_name = f'mouse_act_policy_initial_epoch0.ckpt'
             else:
                 checkpoint_name = f'mouse_act_policy_best_epoch{epoch}_{timestamp}.ckpt'
+                # checkpoint_name = 'mouse_act_policy_best.ckpt'  # Fixed name for best checkpoint
+
 
             checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', checkpoint_name)
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             print(f"Saving best checkpoint to: {checkpoint_path}")
-            torch.save(policy.state_dict(), checkpoint_path)
+            torch.save({
+                'model_state_dict': policy.state_dict(),
+                'config': policy_config,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'epoch': epoch,
+                'loss': avg_loss
+            }, checkpoint_path)
 
         # Log epoch-level metrics
         wandb.log({
@@ -433,6 +443,12 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, required=True, help='Learning rate')
     parser.add_argument('--seed', type=int, required=True, help='Random seed')
     parser.add_argument('--use_dummy_images', action='store_true', help='Use dummy images for training')
+    # Add these new required arguments
+    parser.add_argument('--enc_layers', type=int, required=True, help='Number of encoder layers')
+    parser.add_argument('--dec_layers', type=int, required=True, help='Number of decoder layers')
+    parser.add_argument('--nheads', type=int, required=True, help='Number of attention heads')
+    parser.add_argument('--latent_dim', type=int, required=True, help='Latent dimension size')
+    parser.add_argument('--camera_names', nargs='+', required=True, help='List of camera names')
     args = parser.parse_args(remaining_args)
 
     # Pass args to training
@@ -445,4 +461,23 @@ if __name__ == "__main__":
 """
 python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
 python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images --device cuda
+python3 imitate_mouse/imitate_mouse.py \
+>     --task_name sim_transfer_cube_scripted \
+>     --ckpt_dir checkpoints \
+>     --policy_class ACT \
+>     --kl_weight 10 \
+>     --chunk_size 100 \
+>     --hidden_dim 512 \
+>     --batch_size 8 \
+>     --dim_feedforward 3200 \
+>     --num_epochs 2000 \
+>     --lr 1e-5 \
+>     --seed 0 \
+>     --use_dummy_images \
+>     --enc_layers 1 \
+>     --dec_layers 1 \
+>     --nheads 2 \
+>     --latent_dim 32 \
+>     --camera_names mouse_cam
+
 """
