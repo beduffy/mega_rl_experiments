@@ -9,3 +9,5 @@ wandb*
 
 locomotion/logs/*
 locomotion/*.mp4
+
+training_plots/*

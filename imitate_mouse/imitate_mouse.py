@@ -3,6 +3,7 @@ import time
 import sys
 from datetime import datetime
 from collections import deque
+import glob
 
 import numpy as np
 import torch
@@ -37,12 +38,15 @@ class MouseRecorder:
         self.dummy_size = (64, 64)  # Smaller dummy images
         self.dummy_pos = (960, 540)  # Center position for dummy mode
 
+
     def start_recording(self):
         self.recording = True
         self.data = {'images': [], 'positions': [], 'timestamps': []}
 
+
     def stop_recording(self):
         self.recording = False
+
 
     def capture_frame(self):
         if not self.recording:
@@ -68,6 +72,7 @@ class MouseRecorder:
             self.data['images'].append(np.stack(self.history))
             self.data['positions'].append(pos)
             self.data['timestamps'].append(time.time())
+
 
 def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False):
     """Scripted mouse controller that moves in circles"""
@@ -96,6 +101,7 @@ def circular_mouse_controller(radius=300, speed=2, duration=10, use_dummy=False)
     else:
         print("Dummy mode: Skipping actual mouse movements")
 
+
 class MouseACTDataset(Dataset):
     def __init__(self, recordings, image_size=64, screen_size=(1920, 1080)):
         # Add resize transform
@@ -116,8 +122,10 @@ class MouseACTDataset(Dataset):
         # Use normalized mouse positions as the qpos (2D state) instead of a 14-dim dummy.
         self.qpos = self.positions.clone()
 
+
     def __len__(self):
         return len(self.images)
+
 
     def __getitem__(self, idx):
         frames = self.images[idx]
@@ -154,8 +162,29 @@ def train_mouse_policy(args_dict, device='cuda'):
         positions[:, 0] = 0.5 + radius * np.cos(angles)  # X coordinates
         positions[:, 1] = 0.5 + radius * np.sin(angles)  # Y coordinates
 
+        # Create directory for plots if it doesn't exist
+        os.makedirs('imitate_mouse/plots', exist_ok=True)
+
+        # Create a dummy image with a white circle in the center
+        dummy_image = np.zeros((64, 64, 3), dtype=np.uint8)
+        center = (32, 32)
+        radius = 10  # very strange to put white circle in center
+        cv2.circle(dummy_image, center, radius, (255, 255, 255), -1)
+        cv2.imwrite('imitate_mouse/plots/dummy_image.jpg', dummy_image)
+
+        # Plot positions to verify circular pattern
+        plt.figure(figsize=(10, 10))
+        plt.scatter(positions[:, 0] * 64, positions[:, 1] * 64, alpha=0.5)
+        plt.title('Mouse Target Positions (in pixels)')
+        plt.xlabel('X Position (pixels)')
+        plt.ylabel('Y Position (pixels)')
+        plt.grid(True)
+        plt.savefig('imitate_mouse/plots/target_positions.jpg')
+        plt.close()
+
+        # Create recordings with the dummy image repeated
         recordings = {
-            'images': np.zeros((num_samples, timesteps, 64, 64, 3), dtype=np.uint8),
+            'images': np.stack([dummy_image] * (num_samples * timesteps)).reshape(num_samples, timesteps, 64, 64, 3),
             'positions': positions.astype(np.float32)
         }
     else:
@@ -294,16 +323,38 @@ def train_mouse_policy(args_dict, device='cuda'):
 
         # Save best checkpoint
         if avg_loss < best_loss:
-            # Save both model and config
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            checkpoint_path = os.path.join(args_dict['ckpt_dir'], f'mouse_act_policy_best_{timestamp}.ckpt')
+            previous_best = best_loss  # Store to compare after update
+
+            # Delete previous best checkpoint (except initial epoch 0)
+            if best_loss != float('inf'):  # Skip deletion for first checkpoint
+                previous_ckpt_pattern = os.path.join(os.path.dirname(__file__), 'checkpoints', f'mouse_act_policy_best_epoch*')
+                previous_ckpts = glob.glob(previous_ckpt_pattern)
+
+                # Preserve initial epoch 0 file explicitly
+                if epoch == 0:
+                    initial_ckpt = os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_initial_epoch0.ckpt')
+                    if initial_ckpt in previous_ckpts:
+                        previous_ckpts.remove(initial_ckpt)
+
+                # Delete all other best checkpoints
+                for ckpt in previous_ckpts:
+                    if os.path.exists(ckpt):
+                        os.remove(ckpt)
+                        print(f"Deleted previous checkpoint: {ckpt}")
+
+            best_loss = avg_loss
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # Special name for initial checkpoint
+            if epoch == 0:
+                checkpoint_name = f'mouse_act_policy_initial_epoch0.ckpt'
+            else:
+                checkpoint_name = f'mouse_act_policy_best_epoch{epoch}_{timestamp}.ckpt'
+
+            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', checkpoint_name)
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-            torch.save({
-                'model_state': policy.state_dict(),
-                'config': policy_config,
-                'training_args': args_dict
-            }, checkpoint_path)
-            print(f"Saved checkpoint to: {checkpoint_path}")
+            print(f"Saving best checkpoint to: {checkpoint_path}")
+            torch.save(policy.state_dict(), checkpoint_path)
 
         # Log epoch-level metrics
         wandb.log({
@@ -327,7 +378,7 @@ def train_mouse_policy(args_dict, device='cuda'):
         all_targets = np.concatenate(all_targets)
         all_preds = np.concatenate(all_preds)
         plot_positions(all_targets, all_preds, epoch)
-        wandb.log({"position_plot": wandb.Image(f'training_plots/epoch_{epoch:04d}.png')})
+        wandb.log({"position_plot": wandb.Image(f'training_plots/targets_vs_predictions_epoch_{epoch:04d}.png')})
 
 
 def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
@@ -355,7 +406,7 @@ def plot_positions(targets, preds, epoch, screen_size=(1920, 1080)):
 
     # Save without displaying
     os.makedirs('training_plots', exist_ok=True)
-    plt.savefig(f'training_plots/epoch_{epoch:04d}.png')
+    plt.savefig(f'training_plots/targets_vs_predictions_epoch_{epoch:04d}.png')
     plt.close()
 
 

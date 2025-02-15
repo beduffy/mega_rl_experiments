@@ -161,7 +161,11 @@ class TransformerEncoderLayer(nn.Module):
         self.normalize_before = normalize_before
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
+        if pos is None:
+            return tensor
+        if pos.device != tensor.device:
+            pos = pos.to(tensor.device)
+        return tensor + pos
 
     def forward_post(self,
                      src,
@@ -224,7 +228,11 @@ class TransformerDecoderLayer(nn.Module):
         self.normalize_before = normalize_before
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
+        if pos is None:
+            return tensor
+        if pos.device != tensor.device:
+            pos = pos.to(tensor.device)
+        return tensor + pos
 
     def forward_post(self, tgt, memory,
                      tgt_mask: Optional[Tensor] = None,

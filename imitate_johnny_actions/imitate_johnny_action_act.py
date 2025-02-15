@@ -24,9 +24,13 @@ from act_relevant_files.policy import ACTPolicy
 from act_relevant_files.policy import set_joint_angles_instantly, get_dummy_image
 
 
-# Add denormalization (assuming you have mean/std):
+# Instead of using dataset directly, let's define constants
+ACTION_MEAN = 0.0  # You'll need to set these to your actual values
+ACTION_STD = 1.0   # You'll need to set these to your actual values
+
+# Update denormalization to use constants
 def denormalize(data):
-    return data * dataset.action_std + dataset.action_mean
+    return data * ACTION_STD + ACTION_MEAN
 
 
 # Define joint order matching the URDF structure
@@ -61,13 +65,16 @@ class ServoDataset(Dataset):
     """Dataset for sequence prediction with sliding window"""
     def __init__(self, action_sequences, num_samples=1000, window_size=3, image_size=64,
                  use_real_images=False):
+        # Add these as instance variables if you need them
+        self.action_mean = ACTION_MEAN
+        self.action_std = ACTION_STD
         # Convert each sequence from list of dicts to list of tensors
         self.action_sequences = [
             [self.dict_to_tensor(step) for step in seq]
             for seq in action_sequences
         ]
         self.window_size = window_size
-        self.images = torch.rand(num_samples, 3, image_size, image_size) if use_real_images else torch.zeros(num_samples, 3, image_size, image_size)
+        self.images = torch.rand(num_samples, 1, 3, image_size, image_size) if use_real_images else torch.zeros(num_samples, 1, 3, image_size, image_size)
 
         # Create sequence targets with proper windowing
         self.targets = []
@@ -99,24 +106,19 @@ class ServoDataset(Dataset):
 
 
     def __getitem__(self, idx):
-        """Returns a single sample from the dataset.
-
-        For temporal dataset, consecutive indices represent temporal sequence:
-        idx:     0  1  2  3  4  5  6  7  8  9 ...
-        target:  1  2  3  4  5  6  7  8  9  8 ...
-        """
-        image = self.images[idx]
+        """Returns a single sample from the dataset."""
+        image = self.images[idx]  # Now shape is [1, 3, H, W]
 
         # Only apply augmentations if image isn't black or allowed explicitly
         if not self.use_real_images and torch.all(image == 0):
-            pass  # Skip augmentation for black images
+            pass
         else:
+            # Apply augmentations to each camera view separately
+            image = image.squeeze(0)  # [3, H, W]
             image = self.augment(image)
+            image = image.unsqueeze(0)  # Back to [1, 3, H, W]
 
-        # Check image tensor dimensions before conversion
-        # print(f"Input image shape: {image.shape}")  # Should be [batch, channels, H, W]
-
-        return image, torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
+        return image, torch.zeros(24), self.targets[idx]
 
 
 def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_config=None, args=None):
@@ -154,20 +156,13 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
         for batch_idx, (images, qpos, targets) in enumerate(train_loader):
             images = images.to(device)
             qpos = qpos.to(device)
-            # Handle multi-camera input by averaging across cameras
-            if images.dim() == 5:  # (B, num_cam, C, H, W)
-                # Average across camera dimension to get single image
-                images = images.mean(dim=1)  # Result: (B, C, H, W)
-            # Ensure 3 channels even for averaged images
-            if images.shape[1] == 1:
-                images = images.repeat(1, 3, 1, 1)
-            elif images.shape[1] > 3:  # Handle feature maps
-                images = images[:, :3]  # Take first 3 channels
+            targets = targets.to(device)  # shape: [B, window_size, 24]
 
-            # For ACTPolicy, ensure proper image dimensions (B, C, H, W)
             with torch.cuda.amp.autocast():
-                preds = policy(qpos, images)
-                loss = (criterion(preds, targets) * loss_weights.to(device)).mean()  # Compare full sequence
+                # Reshape targets to match policy output
+                current_targets = targets[:, 0, :]  # Only predict first timestep for now
+                preds = policy(qpos, images)  # shape: [B, 24]
+                loss = (criterion(preds, current_targets) * loss_weights.to(device)).mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -178,7 +173,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
 
             # Calculate per-joint errors
             with torch.no_grad():
-                errors = torch.abs(preds - targets).mean(dim=0)  # Average over batch
+                errors = torch.abs(preds - current_targets).mean(dim=0)  # Average over batch
                 for i, name in enumerate(JOINT_ORDER):
                     joint_errors[name] += errors[i].item()
 
@@ -228,8 +223,8 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
                 sample_img = sample_img.unsqueeze(1)
             if sample_img.shape[2] == 1:
                 sample_img = sample_img.repeat(1, 1, 3, 1, 1)
-            sample_pred = preds[0,0,:].cpu()  # (24,)
-            sample_target = targets[0,0,:].cpu()
+            sample_pred = preds[0].cpu()  # Just take first batch item
+            sample_target = current_targets[0].cpu()  # First batch item of current timestep
 
             # Denormalize before logging
             sample_pred_denorm = denormalize(sample_pred)
@@ -242,9 +237,10 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
                 target_val = sample_target_denorm[i].item()
                 print(f"  {name.ljust(12)}: Pred: {pred_val:.5f} vs Target: {target_val:.5f} (err: {abs(pred_val-target_val):.5f})")
 
+            # Log to wandb without using numpy
             wandb.log({
-                "sample_prediction": wandb.Histogram(sample_pred.numpy()),
-                "sample_target": wandb.Histogram(sample_target.numpy())
+                "sample_prediction": wandb.Histogram(sample_pred.tolist()),
+                "sample_target": wandb.Histogram(sample_target.tolist())
             })
 
         # Update best model
@@ -281,6 +277,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
                 print(f"PyBullet Metrics: COM Dev {np.mean(sim_metrics['com_deviation']):.3f}m, Fall: {sim_metrics['fall_detected']}")
             except Exception as e:
                 print(f"PyBullet evaluation failed: {str(e)}")
+            # torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), 'checkpoints', f'johnny_imitate_best_policy_{timestamp}.pth'))
 
         epoch_time = time.time() - epoch_start_time
         mins, secs = divmod(epoch_time, 60)
