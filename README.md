@@ -1,7 +1,8 @@
 # Robotics Learning Projects
 
-![Python Tests](https://github.com/[owner]/[repository]/actions/workflows/test.yml/badge.svg)
+[![codecov](https://codecov.io/gh/beduffy/mega_rl_experiments/graph/badge.svg?token=QB3GYH82YD)](https://codecov.io/gh/beduffy/mega_rl_experiments)
 
+[![Python Tests](https://github.com/beduffy/mega_rl_experiments/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/beduffy/ainex_private/actions/workflows/test.yml)
 
 A collection of reinforcement learning and imitation learning projects for robotic control tasks.
 
