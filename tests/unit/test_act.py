@@ -17,10 +17,11 @@ import matplotlib
 matplotlib.use('Agg')  # Set non-interactive backend before importing pyplot
 
 # Get path to root directory (two levels up from tests/)
-path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+path_to_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Add both project root and act_relevant_files/detr to path
 sys.path += [
     path_to_root,
+    os.path.join(path_to_root, 'act_relevant_files'),
     os.path.join(path_to_root, 'act_relevant_files', 'detr')
 ]
 
@@ -615,7 +616,8 @@ def test_simple_policy_forward():
 
   # Dynamically load the simple_imitate module due to invalid module name
   module_name = "simple_imitate"
-  file_path = os.path.join(os.path.dirname(__file__), "../2d_look_at/simple_imitate.py")
+  # TODO don't use relative stuff like this?
+  file_path = os.path.join(os.path.dirname(__file__), "../../2d_look_at/simple_imitate.py")
   spec = importlib.util.spec_from_file_location(module_name, file_path)
   simple_imitate = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(simple_imitate)
