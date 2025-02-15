@@ -760,6 +760,7 @@ def test_pybullet_simulation_smoke():
         assert mock_set_joint.call_count == 1
 
 
+@pytest.mark.integration
 def test_mouse_policy_save_load_cycle(tmp_path):
     """Test full training->saving->loading cycle for mouse policy"""
     from imitate_mouse.imitate_mouse import train_mouse_policy, MouseACTDataset
@@ -850,6 +851,7 @@ def test_johnny_policy_save_load_inference():
         assert action.shape == (1, 24), f"Unexpected action shape {action.shape}"
 
 
+
 @pytest.mark.skipif(not pybullet.isNumpyEnabled(), reason="Requires PyBullet")
 def test_pybullet_simulation_smoke():
     """Basic smoke test for policy in PyBullet environment"""
@@ -878,6 +880,8 @@ def test_pybullet_simulation_smoke():
         set_joint_angles_instantly(robot=1, angle_dict_to_try=test_joints)
 
 
+
+@pytest.mark.integration
 def test_mouse_policy_e2e(tmp_path):
     """End-to-enable test of mouse policy training and inference"""
     from imitate_mouse.imitate_mouse import train_mouse_policy
@@ -900,6 +904,7 @@ def test_mouse_policy_e2e(tmp_path):
         'enc_layers': 1,  # Match reduced config
         'dec_layers': 1,
         'nheads': 2,
+        'camera_names': ['mouse_cam'],
         'ckpt_dir': str(tmp_path)
     }
 
