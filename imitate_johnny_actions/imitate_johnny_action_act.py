@@ -231,7 +231,7 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu'):
         # Update best model
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), f'best_policy_{timestamp}.pth'))
+            torch.save(policy.state_dict(), os.path.join(os.path.dirname(__file__), 'checkpoints', f'johnny_imitate_best_policy_{timestamp}.pth'))
 
         epoch_time = time.time() - epoch_start_time
         mins, secs = divmod(epoch_time, 60)
