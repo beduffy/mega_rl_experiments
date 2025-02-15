@@ -317,8 +317,8 @@ def train_mouse_policy(args_dict, device='cuda'):
         # Save best checkpoint
         if avg_loss < best_loss:
             best_loss = avg_loss
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', f'mouse_act_policy_best_{timestamp}.ckpt')
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', f'mouse_act_policy_best_epoch{epoch}_{timestamp}.ckpt')
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             print(f"Saving best checkpoint to: {checkpoint_path}")
             torch.save(policy.state_dict(), checkpoint_path)
