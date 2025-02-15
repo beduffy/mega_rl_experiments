@@ -10,6 +10,10 @@ import numpy as np
 # from imitate_johnny_actions.imitate_johnny_action import SimplePolicy, JOINT_ORDER
 from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, JOINT_ORDER
 
+# TODO see how slow CNN is. profile. Also check GPU and stuff or?
+# TODO how to pytorch AMD?
+
+
 
 def load_policy(checkpoint_path, device='cpu'):
     """Load trained ACT policy from checkpoint"""
@@ -38,7 +42,7 @@ def load_policy(checkpoint_path, device='cpu'):
 
 
 def get_camera_image(robot, width=240, height=240):
-    """Get robot's camera view for policy input"""
+    """Get robot's camera view for policy input (preserved for later use)"""
     # Camera position on robot's head (adjust these values based on your URDF)
     head_link = [i for i in range(p.getNumJoints(robot))
                 if p.getJointInfo(robot, i)[1].decode() == 'head_tilt'][0]
@@ -71,6 +75,12 @@ def get_camera_image(robot, width=240, height=240):
     # Convert to tensor and add camera dimension
     image = torch.from_numpy(rgb[..., :3].transpose(2, 0, 1)).float() / 255.0
     return image.unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, 3, H, W] (batch, camera, channels, H, W)
+
+
+def get_dummy_image():
+    """Generate black dummy image matching training specs"""
+    # Create dummy image tensor: [1, 1, 3, 120, 160] (batch, camera, channels, H, W)
+    return torch.zeros(1, 1, 3, 120, 160, dtype=torch.float32)
 
 
 def set_joint_angles_instantly(robot, angle_dict_to_try):
@@ -129,44 +139,37 @@ if __name__ == "__main__":
     control_interval = 0.1  # Time between policy queries (seconds)
     last_control_time = time.time()
 
+    # Initialize joint targets with neutral position
+    joint_targets = {name: 0.0 for name in JOINT_ORDER}
+
     while True:
         current_time = time.time()
 
-        # Get observations
-        image = get_camera_image(robot).to(args.device)
+        # Get observations - USING DUMMY IMAGE FOR NOW
+        image = get_dummy_image().to(args.device)  # Switch to get_camera_image() when ready
         qpos = torch.zeros(1, 24).to(args.device)  # Replace with actual qpos if available
-        # TODO should the above change or not? what happened during training?
 
         # Run policy at control interval
-        if current_time - last_control_time > control_interval or not action_buffer:
+        if current_time - last_control_time > control_interval:
             start_time = time.time()
             with torch.no_grad():
                 action_output = policy(qpos, image)
-                print(f"Raw policy output shape: {action_output.shape}")  # Debug shape
-                action_sequence = action_output.cpu().numpy()
-                print(f"Action sequence shape: {action_sequence.shape}")  # Debug shape
+                action_array = action_output.cpu().numpy().flatten()  # Force to 1D array
+                print(f"Action output shape: {action_output.shape}")  # Debug
 
-                # Handle different output dimensions
-                if action_sequence.ndim == 3:  # [batch, num_queries, action_dim]
-                    action_buffer = list(action_sequence[0])  # Take first batch
-                else:  # Assume [batch, action_dim]
-                    action_buffer = [action_sequence[0]]  # Single action
+                # Ensure we have 24 elements (one per joint)
+                if len(action_array) != 24:
+                    raise ValueError(f"Expected 24 action values, got {len(action_array)}")
+
+            # Directly map to joint targets
+            joint_targets = {name: action_array[i] for i, name in enumerate(JOINT_ORDER)}
+            print("Sample joint targets:", {k: f"{v:.3f}" for k,v in list(joint_targets.items())[:3]})
 
             inference_time = time.time() - start_time
             print(f"Policy inference took: {inference_time:.3f}s")
             last_control_time = current_time
 
-        # TODO see how slow CNN is. profile. Also check GPU and stuff or?
-        # TODO how to pytorch AMD?
-
-        # Get current action from buffer
-        if action_buffer:
-            current_action = action_buffer.pop(0)
-            print(f"Current action shape: {current_action.shape}")  # Debug shape
-            joint_targets = {name: current_action[i] for i, name in enumerate(JOINT_ORDER)}
-
-        # Apply to simulation
+        # Apply to simulation (now using initialized joint_targets)
         set_joint_angles_instantly(robot, joint_targets)
-
         p.stepSimulation()
         time.sleep(1./240.)
