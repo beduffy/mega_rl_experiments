@@ -378,7 +378,8 @@ if __name__ == "__main__":
         device=device
     )
 
-    """
-    python3 imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
-    python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images --device cuda
-    """
+
+"""
+python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images
+python3 imitate_mouse/imitate_mouse.py --task_name sim_transfer_cube_scripted --ckpt_dir checkpoints --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 --num_epochs 2000  --lr 1e-5 --seed 0 --use_dummy_images --device cuda
+"""

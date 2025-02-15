@@ -8,7 +8,7 @@ import pybullet_data
 import numpy as np
 
 # from imitate_johnny_actions.imitate_johnny_action import SimplePolicy, JOINT_ORDER
-from imitate_johnny_action import SequencePolicy, JOINT_ORDER
+from imitate_johnny_actions.imitate_johnny_action_simple_model import SequencePolicy, JOINT_ORDER
 
 
 def load_policy(checkpoint_path, device='cpu'):

@@ -575,7 +575,7 @@ def test_actpolicy_forward_on_mouse_data():
 
 def test_sequence_policy_forward():
   import torch
-  from imitate_johnny_actions.imitate_johnny_action import SequencePolicy
+  from imitate_johnny_actions.imitate_johnny_action_simple_model import SequencePolicy
 
   dummy_image = torch.randn(1, 3, 240, 240)
   dummy_qpos = torch.randn(1, 24)
