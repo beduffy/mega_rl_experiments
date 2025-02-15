@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 from collections import OrderedDict
 from torchvision import transforms
 import wandb
+import pybullet as p
 
 # Add parent directory to Python path (assuming act_relevant_files is in mega_rl_experiments/)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +21,8 @@ sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 
 # Instead of defining SequencePolicy, we use ACTPolicy
 from act_relevant_files.policy import ACTPolicy
+from act_relevant_files.policy import set_joint_angles_instantly, get_dummy_image
+
 
 # Add denormalization (assuming you have mean/std):
 def denormalize(data):
@@ -253,6 +256,69 @@ def train(policy, train_loader, num_epochs=50, lr=1e-4, device='cpu', policy_con
     hours, rem = divmod(total_time, 3600)
     mins, secs = divmod(rem, 60)
     print(f'\nTotal training time: {int(hours):02d}h {int(mins):02d}m {secs:.1f}s')
+
+
+def validate_greet_sequence(policy, device='cpu'):
+    """Evaluate policy on known GREET sequence without PyBullet"""
+    # TODO untested
+    policy.eval()
+    greet_targets = torch.stack([torch.tensor([step[name] for name in JOINT_ORDER])
+                               for step in all_greet_action_lines])
+
+    with torch.no_grad():
+        # Create dummy inputs matching training format
+        dummy_images = torch.zeros(len(greet_targets), 3, 64, 64).to(device)
+        dummy_qpos = torch.zeros(len(greet_targets), 24).to(device)
+
+        # Predict full sequence
+        preds = policy(dummy_qpos, dummy_images)
+
+    # Calculate metrics
+    mse = torch.mean((preds - greet_targets.to(device))**2).item()
+    max_error = torch.max(torch.abs(preds - greet_targets.to(device))).item()
+
+    print(f"\nGREET Sequence Validation:")
+    print(f"  MSE: {mse:.5f}")
+    print(f"  Max Joint Error: {max_error:.5f} rad")
+    return mse, max_error
+
+
+def evaluate_in_pybullet(policy, device='cpu'):
+    """Run policy in headless PyBullet simulation"""
+    # TODO untested
+    p.connect(p.DIRECT)
+    p.setGravity(0, 0, -9.81)
+    robot = p.loadURDF("your_robot.urdf", [0, 0, 0.25])
+
+    metrics = {
+        'com_deviation': [],
+        'joint_errors': [],
+        'fall_detected': False
+    }
+
+    for step in range(100):  # Simulate 100 steps
+        image = get_dummy_image().to(device)
+        qpos = torch.zeros(1, 24).to(device)
+
+        with torch.no_grad():
+            action = policy(qpos, image).cpu().numpy().flatten()
+
+        # Apply action
+        joint_targets = {name: action[i] for i, name in enumerate(JOINT_ORDER)}
+        set_joint_angles_instantly(robot, joint_targets)
+        p.stepSimulation()
+
+        # Calculate metrics
+        com_pos, _ = p.getCenterOfMass(robot)
+        metrics['com_deviation'].append(np.linalg.norm(com_pos[:2]))  # XY plane deviation
+
+        # Check for fall
+        if com_pos[2] < 0.1:  # Adjust based on robot height
+            metrics['fall_detected'] = True
+            break
+
+    p.disconnect()
+    return metrics
 
 
 def main():
