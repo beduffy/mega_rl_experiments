@@ -286,12 +286,22 @@ def train_mouse_policy(args_dict, device='cuda'):
                 print(f"    Target:    ({target_x:.8f}, {target_y:.8f})")
                 print(f"    Error:     ({abs(pred_x-target_x):.8f}, {abs(pred_y-target_y):.8f})px")
 
+        # Add config validation before saving
+        required_keys = ['hidden_dim', 'dim_feedforward', 'latent_dim', 'enc_layers', 'dec_layers']
+        for k in required_keys:
+            if policy_config[k] != args_dict.get(k):
+                raise ValueError(f"Config mismatch: {k} {policy_config[k]} vs {args_dict.get(k)}")
+
         # Save best checkpoint
         if avg_loss < best_loss:
-            best_loss = avg_loss
+            # Save both model and config
             checkpoint_path = os.path.join(os.path.dirname(__file__), 'checkpoints', 'mouse_act_policy_best.ckpt')
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-            torch.save(policy.state_dict(), checkpoint_path)
+            torch.save({
+                'model_state': policy.state_dict(),
+                'config': policy_config,
+                'training_args': args_dict
+            }, checkpoint_path)
 
         # Log epoch-level metrics
         wandb.log({
