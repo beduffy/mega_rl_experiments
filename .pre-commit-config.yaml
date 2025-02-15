@@ -40,8 +40,8 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: conda run -n py38 pytest
-        language: system  # Changed back to system since we're using conda
+        entry: /home/ben/miniconda3/envs/py38/bin/pytest
+        language: system
         pass_filenames: false
         always_run: true
-        additional_dependencies: []  # Remove this as we're using conda env
+        additional_dependencies: []  # Keep this empty
