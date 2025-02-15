@@ -17,26 +17,13 @@ from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, JOINT_OR
 
 def load_policy(checkpoint_path, device='cpu'):
     """Load trained ACT policy from checkpoint"""
-    policy_config = {
-        'num_queries': 1,
-        'kl_weight': 1,
-        'task_name': 'imitate_johnny_act',
-        'device': device,
-        'num_actions': 24,
-        'state_dim': 24,
-        'hidden_dim': 512,
-        'dim_feedforward': 3200,
-        'lr_backbone': 1e-5,
-        'backbone': 'resnet18',
-        'enc_layers': 2,
-        'dec_layers': 2,
-        'nheads': 8,
-        'dropout': 0.1,
-        'camera_names': ['dummy'],
-    }
-    policy = ACTPolicy(policy_config)
+    # Load config from checkpoint instead of hardcoding
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    policy.load_state_dict(checkpoint)
+    policy_config = checkpoint['config']
+    policy_config['device'] = device  # Update device
+
+    policy = ACTPolicy(policy_config)
+    policy.load_state_dict(checkpoint['model_state'])
     policy.eval()
     return policy
 
