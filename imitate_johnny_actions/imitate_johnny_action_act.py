@@ -108,7 +108,7 @@ class ServoDataset(Dataset):
             image = self.augment(image)
             
         # Check image tensor dimensions before conversion
-        print(f"Input image shape: {image.shape}")  # Should be [batch, channels, H, W]
+        # print(f"Input image shape: {image.shape}")  # Should be [batch, channels, H, W]
         
         return image, torch.zeros(24), self.targets[idx]  # (image, qpos, sequence_target)
 
