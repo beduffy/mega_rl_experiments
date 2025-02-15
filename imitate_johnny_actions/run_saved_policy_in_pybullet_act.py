@@ -8,7 +8,8 @@ import pybullet_data
 import numpy as np
 
 # from imitate_johnny_actions.imitate_johnny_action import SimplePolicy, JOINT_ORDER
-from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, JOINT_ORDER
+from .constants import JOINT_ORDER
+from .imitate_johnny_action_act import ACTPolicy
 
 # TODO see how slow CNN is. profile. Also check GPU and stuff or?
 # TODO how to pytorch AMD?
@@ -18,15 +19,13 @@ from imitate_johnny_actions.imitate_johnny_action_act import ACTPolicy, JOINT_OR
 
 def load_policy(checkpoint_path, device='cpu'):
     """Load trained ACT policy from checkpoint"""
-    # Load config from checkpoint instead of hardcoding
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    policy_config = checkpoint['config']
-    policy_config['device'] = device  # Update device
 
-    policy = ACTPolicy(policy_config)
+    # Create policy from saved config
+    policy = ACTPolicy(checkpoint['config'])
     policy.load_state_dict(checkpoint['model_state'])
     policy.eval()
-    return policy
+    return policy.to(device)
 
 
 def get_camera_image(robot, width=240, height=240):

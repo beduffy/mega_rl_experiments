@@ -14,6 +14,8 @@ from torchvision import transforms
 import wandb
 import pybullet as p
 
+from .constants import JOINT_ORDER
+
 # Add parent directory to Python path (assuming act_relevant_files is in mega_rl_experiments/)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Add act_relevant_files directory to path for util module
@@ -21,7 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 
 # Instead of defining SequencePolicy, we use ACTPolicy
 from act_relevant_files.policy import ACTPolicy
-from act_relevant_files.policy import set_joint_angles_instantly, get_dummy_image
+from .run_saved_policy_in_pybullet_act import set_joint_angles_instantly, get_dummy_image
 
 
 # Instead of using dataset directly, let's define constants
@@ -32,15 +34,6 @@ ACTION_STD = 1.0   # You'll need to set these to your actual values
 def denormalize(data):
     return data * ACTION_STD + ACTION_MEAN
 
-
-# Define joint order matching the URDF structure
-JOINT_ORDER = [
-    'r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll',
-    'l_hip_yaw', 'l_hip_roll', 'l_hip_pitch', 'l_knee', 'l_ank_pitch', 'l_ank_roll',
-    'head_pan', 'head_tilt',
-    'r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper',
-    'l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'
-]
 
 # Hardcoded demonstration data
 GREET_ANGLES = torch.tensor([
