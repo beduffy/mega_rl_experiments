@@ -85,13 +85,13 @@ def get_args_parser():
 
 def build_ACT_model_and_optimizer(args_override):
     """Build the ACT model and optimizer
-    
+
     Args:
         args_override: Dictionary of arguments to override defaults
     """
     # Create default args
     args = argparse.Namespace()
-    
+
     # Set default values based on typical usage
     args.task_name = 'sim_transfer_cube_scripted'
     args.ckpt_dir = 'checkpoints'
@@ -106,7 +106,7 @@ def build_ACT_model_and_optimizer(args_override):
     args.lr = 1e-5
     args.seed = 0
     args.device = 'cpu'
-    
+
     # Additional required args for the model
     args.num_queries = 3
     args.enc_layers = 2
@@ -123,15 +123,15 @@ def build_ACT_model_and_optimizer(args_override):
     args.masks = False
     args.dilation = False  # Default value for dilation
     args.pre_norm = False  # Default value for pre_norm
-    
+
     # Override with any provided arguments
     if isinstance(args_override, dict):
         for key, value in args_override.items():
             setattr(args, key, value)
-    
+
     # Create model
     model = build_ACT_model(args)
-    
+
     # Create optimizer
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -141,7 +141,7 @@ def build_ACT_model_and_optimizer(args_override):
         },
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
-    
+
     return model, optimizer
 
 

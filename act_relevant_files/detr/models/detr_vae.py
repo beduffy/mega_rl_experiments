@@ -89,7 +89,7 @@ class DETRVAE(nn.Module):
         self.to(self.device)
         print(f"Latent projection: {self.latent_proj.in_features}->{self.latent_proj.out_features}")
         # Should show: 512->64 (for latent_dim=32)
-        print(f"Output projection: {self.latent_out_proj.in_features}->{self.latent_out_proj.out_features}") 
+        print(f"Output projection: {self.latent_out_proj.in_features}->{self.latent_out_proj.out_features}")
         # Should show: 32->512
 
     def forward(self, qpos, image, env_state, actions=None, is_pad=None):
@@ -107,33 +107,33 @@ class DETRVAE(nn.Module):
             action_embed = self.encoder_action_proj(actions)  # Expecting (bs, seq, hidden_dim) but may get (bs, hidden_dim)
             if action_embed.dim() == 2:
                 action_embed = action_embed.unsqueeze(1)  # now [bs, 1, hidden_dim]
-            
+
             qpos_embed = self.encoder_joint_proj(qpos)  # (bs, hidden_dim)
             if qpos_embed.dim() == 2:
                 qpos_embed = qpos_embed.unsqueeze(1)  # now [bs, 1, hidden_dim]
-            
+
             cls_embed = self.cls_embed.weight  # (1, hidden_dim)
             cls_embed = cls_embed.unsqueeze(0).repeat(bs, 1, 1)  # (bs, 1, hidden_dim)
-            
+
             # Concatenate along sequence dimension: expected shape (bs, 1 + 1 + seq_len_action, hidden_dim)
             encoder_input = torch.cat([cls_embed, qpos_embed, action_embed], axis=1)
             # print("DEBUG: encoder_input.shape =", encoder_input.shape)  # e.g. [bs, 3, hidden_dim]
             encoder_input = encoder_input.permute(1, 0, 2)  # now shape -> (seq, bs, hidden_dim)
             seq_len = encoder_input.size(0)
             # print("DEBUG: seq_len =", seq_len)
-            
+
             # Adjust positional encoding's length to match seq_len
             pos_embed = self.pos_table.clone().detach()  # initially shape: (1, total_seq_len, hidden_dim)
             pos_embed = pos_embed[:, :seq_len, :]          # slice to match encoder input (1, seq, hidden_dim)
             pos_embed = pos_embed.permute(1, 0, 2)           # now: (seq, 1, hidden_dim)
             # print("DEBUG: pos_embed.shape =", pos_embed.shape)
-            
+
             # Do not mask CLS token.
             cls_joint_is_pad = torch.full((bs, 2), False).to(qpos.device)  # (bs, 2)
             if is_pad.dim() == 1:
                 is_pad = is_pad.unsqueeze(1)  # Add sequence dimension if missing
             is_pad = torch.cat([cls_joint_is_pad, is_pad], axis=1)  # (bs, 2 + action_seq_length)
-            
+
             # Query transformer.
             encoder_output = self.encoder(encoder_input, pos=pos_embed, src_key_padding_mask=is_pad)
             encoder_output = encoder_output[0]  # take CLS output only
@@ -141,15 +141,15 @@ class DETRVAE(nn.Module):
             mu = latent_info[:, :self.latent_dim]  # [batch, latent_dim]
             logvar = latent_info[:, self.latent_dim:2*self.latent_dim]  # [batch, latent_dim]
             latent_sample = reparametrize(mu, logvar)
-            
+
             # Add debug prints before projection
             # print(f"Input qpos device: {qpos.device}")
             # print(f"Image tensor device: {image.device}")
-            
+
             # # Add buffer check
             # print(f"Positional table device: {self.pos_table.device}")
             # print(f"Encoder device: {next(self.encoder.parameters()).device}")
-            
+
             # # Existing projection debug
             # print(f"Latent sample device: {latent_sample.device}")
             # print(f"Projection weight device: {self.latent_out_proj.weight.device}")
@@ -158,7 +158,7 @@ class DETRVAE(nn.Module):
             mu = logvar = None
             latent_sample = torch.zeros([bs, self.latent_dim], dtype=torch.float32).to(qpos.device)
             latent_input = self.latent_out_proj(latent_sample)
-        
+
         if self.backbones is not None:
             # Image observation features and position embeddings.
             all_cam_features = []
@@ -180,10 +180,10 @@ class DETRVAE(nn.Module):
             env_state = self.input_proj_env_state(env_state)
             transformer_input = torch.cat([qpos, env_state], axis=1)  # seq length = 2
             hs = self.transformer(transformer_input, None, self.query_embed.weight, self.pos.weight)[0]
-        
+
         a_hat = self.action_head(hs)
         is_pad_hat = self.is_pad_head(hs)
-        
+
         # Select the appropriate token based on the shape of hs
         if hs.dim() == 3:
             if hs.size(0) == self.num_queries:
@@ -198,7 +198,7 @@ class DETRVAE(nn.Module):
                 raise Exception(f"Unexpected query dimension in hs: {hs.shape}")
         else:
             raise Exception(f"hs must be 3-dimensional, got shape: {hs.shape}")
-        
+
         return a_hat, is_pad_hat, [mu, logvar]
 
 
@@ -346,4 +346,3 @@ def build_cnnmlp(args):
     print("number of parameters: %.2fM" % (n_parameters/1e6,))
 
     return model
-
