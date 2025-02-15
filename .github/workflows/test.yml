@@ -36,6 +36,8 @@ jobs:
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip install -r requirements.txt
         pip install pytest pytest-cov coverage-badge mypy flake8 black isort pre-commit
+        # Install pybullet for physics simulation tests
+        pip install pybullet
         # Create symlink to ensure pytest is in PATH
         sudo ln -s $(which pytest) /usr/local/bin/pytest
 
