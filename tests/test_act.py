@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import torchvision.transforms as transforms
 import importlib.util
+from unittest.mock import patch, Mock
 
 # Get path to root directory (two levels up from tests/)
 path_to_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -688,6 +689,77 @@ def test_actpolicy_forward_as_simple_policy():
   a_hat = policy(qpos, image)
   # Expect output shape (1, 1)
   assert a_hat.shape == (1, 1)
+
+
+def test_mouse_policy_inference_shape():
+    """Test mouse policy produces correct output shape"""
+    from imitate_mouse.imitate_mouse import ACTPolicy
+
+    # Add proper policy config
+    policy_config = {
+        'num_queries': 1,
+        'kl_weight': 1,
+        'hidden_dim': 32,
+        'dim_feedforward': 64,
+        'lr_backbone': 1e-5,
+        'backbone': 'resnet18',
+        'enc_layers': 2,
+        'dec_layers': 2,
+        'nheads': 2,
+        'camera_names': ['mouse_cam'],
+        'num_actions': 2,
+        'state_dim': 2,
+        'latent_dim': 8,
+        'device': 'cpu'
+    }
+
+    # Create dummy input
+    dummy_images = torch.zeros(1, 3, 240, 240)  # [batch, C, H, W]
+    dummy_qpos = torch.zeros(1, 2)
+
+    policy = ACTPolicy(policy_config)
+    with torch.no_grad():
+        output = policy(dummy_qpos, dummy_images.unsqueeze(0))  # Add sequence dimension
+        assert output.shape == (1, 2), f"Unexpected output shape {output.shape}"
+
+
+def test_pybullet_simulation_smoke():
+    """Basic smoke test for policy in PyBullet environment"""
+    from imitate_johnny_actions.run_saved_policy_in_pybullet_act import set_joint_angles_instantly
+
+    # Mock joint structure
+    mock_joint_info = [
+        (0, b'r_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1),
+        (1, b'l_hip_yaw', 0, -1, -1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 1)
+    ]
+
+    with patch('pybullet.connect') as mock_connect, \
+         patch('pybullet.loadURDF') as mock_load, \
+         patch('pybullet.getNumJoints') as mock_num_joints, \
+         patch('pybullet.getJointInfo') as mock_get_joint_info, \
+         patch('pybullet.setJointMotorControl2') as mock_set_joint, \
+         patch('time.sleep'):
+
+        mock_connect.return_value = None
+        mock_load.return_value = 1
+        mock_num_joints.return_value = len(mock_joint_info)
+        mock_get_joint_info.side_effect = lambda robot, idx: mock_joint_info[idx]
+
+        # Test joint setting
+        test_joints = {'r_hip_yaw': 0.5, 'l_hip_yaw': -0.5}
+        set_joint_angles_instantly(robot=1, angle_dict_to_try=test_joints)
+
+        # Verify joint calls - access arguments correctly
+        assert mock_set_joint.call_count == 2
+        called_joints = {
+            call[0][1]: call[1]['targetPosition']  # args[0][1] is joint index
+            for call in mock_set_joint.call_args_list
+        }
+        expected_joints = {
+            0: 0.5,  # r_hip_yaw index from mock_joint_info
+            1: -0.5  # l_hip_yaw index
+        }
+        assert called_joints == expected_joints
 
 
 if __name__ == '__main__':
