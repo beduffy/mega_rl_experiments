@@ -1,14 +1,25 @@
 import time
 import argparse
+import os
+import pytest
 
 import numpy as np
 import torch
-import pyautogui
 
 from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 
+# Only import pyautogui if we have a display
+if 'DISPLAY' in os.environ or 'PYTEST_CURRENT_TEST' in os.environ:
+    import pyautogui
+else:
+    pyautogui = None  # Mock for headless environments
+
 
 def run_policy_eval(args, num_steps=100):
+    # Skip if in headless environment
+    if pyautogui is None:
+        pytest.skip("Skipping GUI test in headless environment")
+
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
 
     # Load checkpoint with proper error handling
