@@ -1,0 +1,19 @@
+---
+description: project structure and goals
+globs:
+---
+
+
+Imitate mouse
+Keep this file updated as project structure and goals change
+- [project_structure_goals.md](mdc:imitate_johnny_actions/project_structure_goals.md)](mdc:imitate_mouse/project_structure_goals.md)
+
+Imitate Johnny
+Keep this file updated as project structure and goals change
+- [project_structure_goals.md](mdc:imitate_johnny_actions/project_structure_goals.md)
+
+2d_look_at
+
+3d_look_at
+
+tests/test_act.py - all tests need to pass
