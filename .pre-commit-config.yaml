@@ -3,7 +3,7 @@ repos:
     rev: v5.0.0  # Use the latest stable version
     hooks:
       - id: trailing-whitespace
-      # - id: end-of-file-fixer
+      - id: end-of-file-fixer
       - id: check-merge-conflict
       - id: check-yaml
       - id: check-json
@@ -46,3 +46,6 @@ repos:
         files: ^src/|^tests/  # Only trigger when source/test files change
         exclude: ^docs/|^examples/
         always_run: false
+        additional_dependencies: []
+        env:
+          PYTHONPATH: ${PYTHONPATH}:/home/ben/all_projects/mega_rl_experiments/act_relevant_files

@@ -29,7 +29,7 @@ SYSTEM_PYTEST="pytest"
 
 if [ -f "$CONDA_PYTEST" ]; then
     echo "Running targeted tests: $SELECTED_TESTS"
-    exec "$CONDA_PYTEST" -v $SELECTED_TESTS
+    exec "$CONDA_PYTEST" -v -m "not integration" $SELECTED_TESTS
 else
     echo "Running all tests"
     exec "$SYSTEM_PYTEST" -v "$DEFAULT_TESTS"

@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 # from util.misc import NestedTensor
-from detr.util.misc import NestedTensor, is_main_process
+from ..util.misc import NestedTensor, is_main_process
 
 import IPython
 e = IPython.embed
