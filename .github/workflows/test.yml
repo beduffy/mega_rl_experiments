@@ -21,6 +21,23 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb x11-utils xserver-xorg-video-dummy libgl1-mesa-glx
+
+    - name: Configure virtual display
+      run: |
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        echo "DISPLAY=:99" >> $GITHUB_ENV
+        echo "XAUTHORITY=/tmp/.Xauthority" >> $GITHUB_ENV
+        xauth generate :99 . trusted
+        xauth add $(xauth list | tail -1)
+
+    - name: Run integration tests
+      run: |
+        pytest -m integration --cov=./ --cov-report=xml
+
     - name: Cache pip packages
       uses: actions/cache@v3
       with:
@@ -58,21 +75,11 @@ jobs:
     # - name: Check import sorting with isort
     #   run: isort --check-only --diff .
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb libgtk-3-dev libx11-xcb1 libxss1 libgconf-2-4 libnss3 libasound2
-
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pytest pyautogui
-
-    - name: Run integration tests with virtual display
-      uses: GabrielBB/xvfb-action@v1
-      with:
-        run: pytest -m integration --cov=./ --cov-report=xml
 
     - name: Run tests with coverage
       run: |

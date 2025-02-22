@@ -8,13 +8,16 @@ import torch
 
 from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 
-# Only import pyautogui if we have a display
-if os.name == 'posix' and 'DISPLAY' not in os.environ:
-    os.environ['DISPLAY'] = ':99'  # Match Xvfb display number
-if 'DISPLAY' in os.environ or 'PYTEST_CURRENT_TEST' in os.environ:
+# Configure display for headless environments
+if os.name == 'posix' and not os.environ.get('DISPLAY'):
+    os.environ['DISPLAY'] = ':99'
+    os.environ['XAUTHORITY'] = '/tmp/.Xauthority'
+
+try:
     import pyautogui
-else:
-    pyautogui = None  # Mock for headless environments
+    from Xlib.display import Display
+except ImportError:
+    pyautogui = None
 
 
 def run_policy_eval(args, num_steps=100):
