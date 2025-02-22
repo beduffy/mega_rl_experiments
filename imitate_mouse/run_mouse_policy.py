@@ -9,6 +9,8 @@ import torch
 from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 
 # Only import pyautogui if we have a display
+if os.name == 'posix' and 'DISPLAY' not in os.environ:
+    os.environ['DISPLAY'] = ':99'  # Match Xvfb display number
 if 'DISPLAY' in os.environ or 'PYTEST_CURRENT_TEST' in os.environ:
     import pyautogui
 else:
@@ -74,10 +76,11 @@ def run_policy_eval(args, num_steps=100):
                 action = policy(qpos, input_tensor.unsqueeze(0))
                 pred_normalized = action[0].cpu().numpy()
 
-            pred_x = int(pred_normalized[0] * pyautogui.size().width)
-            pred_y = int(pred_normalized[1] * pyautogui.size().height)
-            pyautogui.moveTo(pred_x, pred_y, duration=0.01)
-            print(f"Moving mouse to ({pred_x}, {pred_y})")
+            if pyautogui is not None:
+                pred_x = int(pred_normalized[0] * pyautogui.size().width)
+                pred_y = int(pred_normalized[1] * pyautogui.size().height)
+                pyautogui.moveTo(pred_x, pred_y, duration=0.01)
+                print(f"Moving mouse to ({pred_x}, {pred_y})")
 
             if args.dummy:
                 recorder.history.clear()  # Reset for next batch
