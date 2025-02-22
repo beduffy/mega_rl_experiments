@@ -11,3 +11,4 @@ locomotion/logs/*
 locomotion/*.mp4
 
 training_plots/*
+.coverage
