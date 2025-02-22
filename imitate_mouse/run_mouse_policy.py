@@ -9,21 +9,23 @@ import torch
 from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 
 # Configure display for headless environments
-if os.name == 'posix' and not os.environ.get('DISPLAY'):
-    os.environ['DISPLAY'] = ':99'
-    os.environ['XAUTHORITY'] = '/tmp/.Xauthority'
+# if os.name == 'posix' and not os.environ.get('DISPLAY'):
+#     os.environ['DISPLAY'] = ':99'
+#     os.environ['XAUTHORITY'] = '/tmp/.Xauthority'
 
 try:
     import pyautogui
-    from Xlib.display import Display
+    # from Xlib.display import Display
 except ImportError:
     pyautogui = None
 
 
 def run_policy_eval(args, num_steps=100):
     # Skip if in headless environment
-    if pyautogui is None:
-        pytest.skip("Skipping GUI test in headless environment")
+    # if pyautogui is None:
+    #     pytest.skip("Skipping GUI test in headless environment")
+    # Skip GUI interaction in cloud environments
+    in_cloud = os.environ.get('CI') or not os.environ.get('DISPLAY')
 
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
 
@@ -79,7 +81,7 @@ def run_policy_eval(args, num_steps=100):
                 action = policy(qpos, input_tensor.unsqueeze(0))
                 pred_normalized = action[0].cpu().numpy()
 
-            if pyautogui is not None:
+            if pyautogui is not None or not in_cloud:
                 pred_x = int(pred_normalized[0] * pyautogui.size().width)
                 pred_y = int(pred_normalized[1] * pyautogui.size().height)
                 pyautogui.moveTo(pred_x, pred_y, duration=0.01)

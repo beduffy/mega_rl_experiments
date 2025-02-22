@@ -1,6 +1,7 @@
 import pytest
 import os
 from unittest.mock import patch
+import ast
 
 
 @pytest.mark.integration
@@ -39,9 +40,15 @@ def test_mouse_policy_e2e(tmp_path):
         dummy = True
         cpu = True
 
-    with patch('pyautogui.moveTo') as mock_move:
-        run_policy_eval(Args())
-        assert mock_move.call_count > 3, "Insufficient policy predictions"
+    # Capture print output instead of mocking mouse movement
+    with patch('builtins.print') as mock_print:
+        run_policy_eval(Args(), num_steps=5)
+        # Verify policy is producing normalized outputs
+        outputs = [ast.literal_eval(call[0][0].split(": ")[1]) for call in mock_print.call_args_list if 'Policy output' in call[0][0]]
+        assert len(outputs) > 3, "Insufficient policy predictions"
+        for out in outputs:
+            assert 0 <= out[0] <= 1, "X output not normalized"
+            assert 0 <= out[1] <= 1, "Y output not normalized"
 
 
 @pytest.mark.integration
