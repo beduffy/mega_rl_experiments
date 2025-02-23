@@ -27,6 +27,10 @@ def run_policy_eval(args, num_steps=100):
     # Skip GUI interaction in cloud environments
     in_cloud = os.environ.get('CI') or not os.environ.get('DISPLAY')
 
+    if in_cloud and pyautogui is not None:
+        pyautogui = None  # Disable GUI functionality
+        print("Running in cloud environment, disabling mouse control")
+
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
 
     # Load checkpoint with proper error handling

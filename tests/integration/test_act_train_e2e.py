@@ -44,11 +44,15 @@ def test_mouse_policy_e2e(tmp_path):
     with patch('builtins.print') as mock_print:
         run_policy_eval(Args(), num_steps=5)
         # Verify policy is producing normalized outputs
-        outputs = [ast.literal_eval(call[0][0].split(": ")[1]) for call in mock_print.call_args_list if 'Policy output' in call[0][0]]
-        assert len(outputs) > 3, "Insufficient policy predictions"
+        outputs = [
+            ast.literal_eval(call.args[0].split(": ")[1])
+            for call in mock_print.call_args_list
+            if 'Policy output' in call.args[0]
+        ]
+        assert len(outputs) > 3, f"Insufficient policy predictions, got {len(outputs)}"
         for out in outputs:
-            assert 0 <= out[0] <= 1, "X output not normalized"
-            assert 0 <= out[1] <= 1, "Y output not normalized"
+            assert 0 <= out[0] <= 1, f"X output {out[0]} not normalized"
+            assert 0 <= out[1] <= 1, f"Y output {out[1]} not normalized"
 
 
 @pytest.mark.integration
