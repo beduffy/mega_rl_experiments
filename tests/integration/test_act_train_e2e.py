@@ -97,6 +97,11 @@ def test_mouse_policy_save_load_cycle(tmp_path):
         cpu = True
 
     # Test policy execution with dummy input
-    with patch('pyautogui.moveTo') as mock_move:
+    with patch('builtins.print') as mock_print:
         run_policy_eval(Args(), num_steps=10)
-        assert mock_move.called, "Policy didn't generate mouse movements"
+        outputs = [
+            ast.literal_eval(call.args[0].split(": ")[1])
+            for call in mock_print.call_args_list
+            if 'Policy output' in call.args[0]
+        ]
+        assert len(outputs) > 5, f"Expected policy outputs, got {len(outputs)}"

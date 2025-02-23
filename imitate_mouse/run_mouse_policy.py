@@ -21,6 +21,7 @@ except KeyError:
 
 
 def run_policy_eval(args, num_steps=100):
+    global pyautogui
     # Skip if in headless environment
     # if pyautogui is None:
     #     pytest.skip("Skipping GUI test in headless environment")
