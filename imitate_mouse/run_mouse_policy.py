@@ -16,7 +16,7 @@ from imitate_mouse.imitate_mouse import MouseRecorder, ACTPolicy
 try:
     import pyautogui
     # from Xlib.display import Display
-except ImportError:
+except KeyError:
     pyautogui = None
 
 
