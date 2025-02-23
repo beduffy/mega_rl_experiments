@@ -34,6 +34,18 @@ jobs:
     #     xauth generate :99 . trusted
     #     xauth add $(xauth list | tail -1)
 
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Install PyTorch first
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install -r requirements.txt
+        pip install pytest pytest-cov coverage-badge mypy flake8 black isort pre-commit
+        # Install pybullet for physics simulation tests
+        pip install pybullet
+        # Create symlink to ensure pytest is in PATH
+        sudo ln -s $(which pytest) /usr/local/bin/pytest
+
     - name: Run integration tests
       run: |
         pytest -m integration --cov=./ --cov-report=xml
@@ -46,17 +58,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        # Install PyTorch first
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-        pip install -r requirements.txt
-        pip install pytest pytest-cov coverage-badge mypy flake8 black isort pre-commit
-        # Install pybullet for physics simulation tests
-        pip install pybullet
-        # Create symlink to ensure pytest is in PATH
-        sudo ln -s $(which pytest) /usr/local/bin/pytest
 
     - name: Run pre-commit
       run: |
